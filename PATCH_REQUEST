@@ -4,3 +4,4 @@ time_ruler_drag=true
 space_transport=true
 stop_modes=continue,return
 visual_polish=rg_dark
+retry=1
