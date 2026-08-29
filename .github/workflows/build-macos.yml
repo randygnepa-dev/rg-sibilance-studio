@@ -107,4 +107,4 @@ jobs:
             git push
           fi
 
-# trigger 0.3.2 spectral shape and reference matching build
+# trigger 0.4.0 Clean Pro fixed-layout build
