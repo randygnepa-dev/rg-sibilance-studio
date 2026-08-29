@@ -1,0 +1,122 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Sources/**'
+      - 'VERSION'
+      - '.github/workflows/build-macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rg-sibilance-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building RG Sibilance Studio $VERSION"
+
+      - name: Compile Apple Silicon
+        shell: bash
+        run: |
+          mkdir -p build/arm64 build/x86_64 dist
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          xcrun --sdk macosx swiftc Sources/RGSibilanceStudio.swift \
+            -sdk "$SDK" \
+            -target arm64-apple-macosx12.0 \
+            -framework Cocoa -framework AVFoundation \
+            -O \
+            -o build/arm64/RGSibilanceStudio
+
+      - name: Compile Intel
+        shell: bash
+        run: |
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          xcrun --sdk macosx swiftc Sources/RGSibilanceStudio.swift \
+            -sdk "$SDK" \
+            -target x86_64-apple-macosx12.0 \
+            -framework Cocoa -framework AVFoundation \
+            -O \
+            -o build/x86_64/RGSibilanceStudio
+
+      - name: Create universal binary
+        shell: bash
+        run: |
+          lipo -create \
+            build/arm64/RGSibilanceStudio \
+            build/x86_64/RGSibilanceStudio \
+            -output dist/RGSibilanceStudio
+          chmod +x dist/RGSibilanceStudio
+          lipo -info dist/RGSibilanceStudio
+
+      - name: Build application bundle
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          APP="dist/RG Sibilance Studio.app"
+          mkdir -p "$APP/Contents/MacOS"
+          cp dist/RGSibilanceStudio "$APP/Contents/MacOS/RG Sibilance Studio"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CFBundleName</key><string>RG Sibilance Studio</string>
+          <key>CFBundleDisplayName</key><string>RG Sibilance Studio</string>
+          <key>CFBundleIdentifier</key><string>studio.rg.sibilance</string>
+          <key>CFBundleExecutable</key><string>RG Sibilance Studio</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+          <key>CFBundleVersion</key><string>${VERSION}</string>
+          <key>LSMinimumSystemVersion</key><string>12.0</string>
+          <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep --sign - "$APP"
+
+      - name: Package update
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ditto -c -k --sequesterRsrc --keepParent "dist/RG Sibilance Studio.app" "dist/RG-Sibilance-Studio-${VERSION}.zip"
+          shasum -a 256 "dist/RG-Sibilance-Studio-${VERSION}.zip" | awk '{print $1}' > dist/SHA256
+          cp VERSION dist/VERSION
+          printf '%s\n' "RG-Sibilance-Studio-${VERSION}.zip" > dist/LATEST
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RG-Sibilance-Studio-${{ steps.version.outputs.version }}
+          path: |
+            dist/RG Sibilance Studio.app
+            dist/RG-Sibilance-Studio-${{ steps.version.outputs.version }}.zip
+            dist/VERSION
+            dist/LATEST
+            dist/SHA256
+
+      - name: Publish dist to repository
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f dist/VERSION dist/LATEST dist/SHA256 dist/RG-Sibilance-Studio-*.zip
+          if git diff --cached --quiet; then
+            echo "No dist changes"
+          else
+            git commit -m "Publish macOS build ${{ steps.version.outputs.version }}"
+            git push
+          fi
