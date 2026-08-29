@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.3.1"
+let RGVersion = "0.3.2"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -37,6 +37,8 @@ struct SibilanceEvent: Codable {
     var resonanceAmount: Double? = nil
     var resonanceHz: Double? = nil
     var resonanceQ: Double? = nil
+    var spectralTilt: Double? = nil
+    var spectralFlatten: Double? = nil
 }
 
 struct FileSession: Codable {
@@ -1448,6 +1450,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var resonanceSlider: NSSlider!
     private var resonanceValueLabel: NSTextField!
     private var resonanceFreqLabel: NSTextField!
+    private var spectralTiltSlider: NSSlider!
+    private var spectralTiltValue: NSTextField!
+    private var flattenSlider: NSSlider!
+    private var flattenValue: NSTextField!
+    private var referenceInfoLabel: NSTextField!
 
     private var model = AudioModel()
     private var events: [SibilanceEvent] = []
@@ -1678,16 +1685,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let panelY: CGFloat = 44
         let panelH = max(CGFloat(214), editorY - 56)
         let gap: CGFloat = 10
-        let leftW: CGFloat = 210
-        let centerW: CGFloat = 390
+        let leftW: CGFloat = 190
+        let rightW: CGFloat = 250
         let advancedW: CGFloat = 180
-        let rightW = max(CGFloat(250), mainW - leftW - centerW - advancedW - gap * 3)
+        let centerW: CGFloat = max(430, mainW - leftW - rightW - gap * 2)
         let p1 = makePanel(NSRect(x: 42, y: panelY, width: leftW, height: panelH))
         let p2 = makePanel(NSRect(x: 42 + leftW + gap, y: panelY, width: centerW, height: panelH))
-        let pAdv = makePanel(NSRect(x: 42 + leftW + centerW + gap * 2, y: panelY, width: advancedW, height: panelH))
-        let p3 = makePanel(NSRect(x: 42 + leftW + centerW + advancedW + gap * 3, y: panelY, width: rightW, height: panelH))
+        let pAdv = makePanel(NSRect(x: -1000, y: panelY, width: advancedW, height: panelH))
+        pAdv.isHidden = true
+        let p3 = makePanel(NSRect(x: 42 + leftW + gap + centerW + gap, y: panelY, width: rightW, height: panelH))
         p2.autoresizingMask = [.width]
-        pAdv.autoresizingMask = [.minXMargin]
         p3.autoresizingMask = [.minXMargin]
         root.addSubview(p1); root.addSubview(p2); root.addSubview(pAdv); root.addSubview(p3)
         addTitle("ADVANCED", to: pAdv, y: panelH - 30)
@@ -1724,23 +1731,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "Č", "T", "Ť", "D", "K", "P", "B", "F", "CH", "OTHER"])
         kindPopup.target = self; kindPopup.action = #selector(kindChanged); kindPopup.isEnabled = false; p2.addSubview(kindPopup)
 
-        let rs = label("SIBILANCE", size: 11, weight: .bold, color: .white); rs.frame = NSRect(x: 16, y: panelH - 112, width: 110, height: 18); p2.addSubview(rs)
+        let rs = label("SIBILANCE LEVEL", size: 10, weight: .bold, color: .white); rs.frame = NSRect(x: 16, y: panelH - 106, width: 120, height: 18); p2.addSubview(rs)
         repairSlider = NSSlider(value: 0.66, minValue: 0, maxValue: 1, target: self, action: #selector(repairStrengthChanged(_:)))
-        repairSlider.frame = NSRect(x: 96, y: panelH - 116, width: centerW - 150, height: 22); p2.addSubview(repairSlider)
-        let less = label("LESS S", size: 9, color: NSColor(hex: 0x738390)); less.frame = NSRect(x: 16, y: panelH - 138, width: 55, height: 16); p2.addSubview(less)
-        let more = label("MORE S", size: 9, color: NSColor(hex: 0x738390)); more.frame = NSRect(x: centerW - 76, y: panelH - 138, width: 60, height: 16); p2.addSubview(more)
+        repairSlider.frame = NSRect(x: 132, y: panelH - 110, width: centerW - 150, height: 22); p2.addSubview(repairSlider)
 
-        let whistleTitle = label("WHISTLE", size: 10, weight: .bold, color: NSColor(hex: 0xD9E1E7)); whistleTitle.frame = NSRect(x: 16, y: 48, width: 62, height: 18); p2.addSubview(whistleTitle)
+        let toneTitle = label("SPECTRAL TONE", size: 10, weight: .bold, color: .white); toneTitle.frame = NSRect(x: 16, y: panelH - 140, width: 110, height: 18); p2.addSubview(toneTitle)
+        spectralTiltSlider = NSSlider(value: 0, minValue: -1, maxValue: 1, target: self, action: #selector(spectralTiltChanged(_:)))
+        spectralTiltSlider.frame = NSRect(x: 132, y: panelH - 144, width: centerW - 225, height: 22); spectralTiltSlider.isEnabled = false; p2.addSubview(spectralTiltSlider)
+        spectralTiltValue = label("NEUTRAL", size: 9, weight: .semibold, color: NSColor(hex: 0x9FC6E6)); spectralTiltValue.frame = NSRect(x: centerW - 86, y: panelH - 140, width: 70, height: 18); p2.addSubview(spectralTiltValue)
+
+        let flatTitle = label("FLATTEN", size: 10, weight: .bold, color: .white); flatTitle.frame = NSRect(x: 16, y: panelH - 170, width: 70, height: 18); p2.addSubview(flatTitle)
+        flattenSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: self, action: #selector(flattenChanged(_:)))
+        flattenSlider.frame = NSRect(x: 88, y: panelH - 174, width: 138, height: 22); flattenSlider.isEnabled = false; p2.addSubview(flattenSlider)
+        flattenValue = label("0%", size: 9, weight: .semibold, color: NSColor(hex: 0xB9C8D3)); flattenValue.frame = NSRect(x: 230, y: panelH - 170, width: 36, height: 18); p2.addSubview(flattenValue)
+
+        let whistleTitle = label("WHISTLE", size: 10, weight: .bold, color: .white); whistleTitle.frame = NSRect(x: 282, y: panelH - 170, width: 64, height: 18); p2.addSubview(whistleTitle)
         resonanceSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: self, action: #selector(resonanceChanged(_:)))
-        resonanceSlider.frame = NSRect(x: 78, y: 45, width: 148, height: 22); resonanceSlider.isEnabled = false; p2.addSubview(resonanceSlider)
-        resonanceValueLabel = label("0%", size: 9, weight: .semibold, color: NSColor(hex: 0xB9C8D3)); resonanceValueLabel.frame = NSRect(x: 230, y: 48, width: 34, height: 18); p2.addSubview(resonanceValueLabel)
-        let findWhistle = button("AUTO FIND", action: #selector(autoFindWhistle)); findWhistle.frame = NSRect(x: 268, y: 43, width: 82, height: 26); p2.addSubview(findWhistle)
-        resonanceFreqLabel = label("—", size: 9, color: NSColor(hex: 0x8394A1)); resonanceFreqLabel.frame = NSRect(x: 16, y: 27, width: 150, height: 16); p2.addSubview(resonanceFreqLabel)
+        resonanceSlider.frame = NSRect(x: 346, y: panelH - 174, width: max(70, centerW - 454), height: 22); resonanceSlider.isEnabled = false; p2.addSubview(resonanceSlider)
+        resonanceValueLabel = label("0%", size: 9, weight: .semibold, color: NSColor(hex: 0xB9C8D3)); resonanceValueLabel.frame = NSRect(x: centerW - 102, y: panelH - 170, width: 34, height: 18); p2.addSubview(resonanceValueLabel)
+        let findWhistle = button("AUTO", action: #selector(autoFindWhistle)); findWhistle.frame = NSRect(x: centerW - 64, y: panelH - 177, width: 50, height: 26); p2.addSubview(findWhistle)
+        resonanceFreqLabel = label("", size: 9, color: NSColor(hex: 0x8394A1)); resonanceFreqLabel.frame = NSRect(x: 282, y: panelH - 190, width: 150, height: 16); p2.addSubview(resonanceFreqLabel)
 
-        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 4, width: 102, height: 28); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
-        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 124, y: 4, width: 120, height: 28); p2.addSubview(morph)
-        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 250, y: 4, width: 120, height: 28); p2.addSubview(blend)
-        applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 34, width: 116, height: 26); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
+        let setRef = button("SET AS REFERENCE", action: #selector(setSelectedAsReference)); setRef.frame = NSRect(x: 16, y: 42, width: 138, height: 28); p2.addSubview(setRef)
+        let matchRef = button("MATCH REFERENCE", action: #selector(matchSelectedToReference)); matchRef.frame = NSRect(x: 160, y: 42, width: 142, height: 28); p2.addSubview(matchRef)
+        referenceInfoLabel = label("No reference for selected type", size: 9, color: NSColor(hex: 0x7F93A2)); referenceInfoLabel.frame = NSRect(x: 310, y: 47, width: max(100, centerW - 326), height: 18); referenceInfoLabel.lineBreakMode = .byTruncatingTail; p2.addSubview(referenceInfoLabel)
+
+        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 8, width: 102, height: 28); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
+        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 124, y: 8, width: 120, height: 28); p2.addSubview(morph)
+        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 250, y: 8, width: 120, height: 28); p2.addSubview(blend)
+        applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 8, width: 116, height: 28); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
 
         let trimLabel = label("TYPE TRIM", size: 10); trimLabel.frame = NSRect(x: 16, y: panelH - 91, width: 78, height: 18); pAdv.addSubview(trimLabel)
         typeTrimSlider = NSSlider(value: 0, minValue: -12, maxValue: 0, target: self, action: #selector(typeTrimChanged)); typeTrimSlider.frame = NSRect(x: 16, y: panelH - 116, width: advancedW - 72, height: 22); typeTrimSlider.isEnabled = false; pAdv.addSubview(typeTrimSlider)
@@ -1858,6 +1877,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         selectEvent(i)
         saveCurrentSession()
         status.stringValue = String(format: "REPAIR STRENGTH %d%% — %.1f dB", Int(amount * 100), events[i].gainDB)
+    }
+
+    private func applySpectralShape(to i: Int) {
+        guard events.indices.contains(i) else { return }
+        let tilt = min(1, max(-1, events[i].spectralTilt ?? 0))
+        let flat = min(1, max(0, events[i].spectralFlatten ?? 0))
+        let fp = model.fingerprint(for: events[i])
+        guard fp.count == 5 else { return }
+        let mean = fp.reduce(0,+) / 5.0
+        var db = Array(repeating: 0.0, count: 5)
+        for b in 0..<5 {
+            let flattenDelta = (mean - fp[b]) * 14.0 * flat
+            let pos = Double(b) / 4.0
+            let tiltDB = tilt * (pos - 0.35) * 7.0
+            db[b] = min(3.0, max(-10.0, flattenDelta + tiltDB))
+        }
+        db[0] = min(1.5, max(-5.0, db[0]))
+        db[4] = min(2.0, max(-6.0, db[4]))
+        events[i].spectralDB = db
+        events[i].repairMethod = "SPECTRAL SHAPE"
+    }
+
+    @objc private func spectralTiltChanged(_ sender: NSSlider) {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        events[i].spectralTilt = sender.doubleValue
+        applySpectralShape(to: i)
+        timeline.events = events; saveCurrentSession(); previewPlayer?.stop(); transportPlayer?.stop(); selectEvent(i)
+        spectralTiltValue.stringValue = sender.doubleValue < -0.08 ? "DARK" : (sender.doubleValue > 0.08 ? "BRIGHT" : "NEUTRAL")
+        status.stringValue = String(format: "SPECTRAL TILT %+0.0f%%", sender.doubleValue * 100)
+    }
+
+    @objc private func flattenChanged(_ sender: NSSlider) {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        events[i].spectralFlatten = sender.doubleValue
+        applySpectralShape(to: i)
+        timeline.events = events; saveCurrentSession(); previewPlayer?.stop(); transportPlayer?.stop(); selectEvent(i)
+        flattenValue.stringValue = "\(Int(sender.doubleValue * 100))%"
+        status.stringValue = "SPECTRAL FLATTEN \(Int(sender.doubleValue * 100))%"
+    }
+
+    @objc private func setSelectedAsReference() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i), let url = model.url else { status.stringValue = "SELECT AN EVENT FIRST"; return }
+        events[i].userLabel = "GOOD"
+        let ex = RGExemplar(kind: events[i].kind, fingerprint: model.fingerprint(for: events[i]), duration: events[i].end-events[i].start, sourcePath: url.path, start: events[i].start, end: events[i].end, createdAt: Date().timeIntervalSince1970)
+        learningStore.add(ex)
+        timeline.events = events; saveCurrentSession(); selectEvent(i); refreshAnnotationSidebar()
+        status.stringValue = "REFERENCE SAVED — [\(events[i].kind)] \(formatTime(events[i].peakTime))"
+    }
+
+    @objc private func matchSelectedToReference() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { status.stringValue = "SELECT AN EVENT FIRST"; return }
+        guard let ref = learningStore.best(kind: events[i].kind, excludingPath: nil) else { status.stringValue = "NO SAVED REFERENCE FOR [\(events[i].kind)]"; return }
+        let target = model.fingerprint(for: events[i])
+        let targetMean = max(1e-6, target.reduce(0,+)/5.0)
+        let refMean = max(1e-6, ref.fingerprint.reduce(0,+)/Double(max(1,ref.fingerprint.count)))
+        var shape=[Double]()
+        for b in 0..<5 {
+            let t = target[b]/targetMean
+            let r = ref.fingerprint[b]/refMean
+            let delta = 20.0 * log10(max(0.05,r)/max(0.05,t))
+            shape.append(min(3.0,max(-10.0,delta*0.72)))
+        }
+        shape[4] = min(2.0,max(-5.0,shape[4]))
+        events[i].spectralDB = shape
+        events[i].gainDB = min(0, max(-12, events[i].gainDB))
+        events[i].repairMethod = "REFERENCE MATCH"
+        events[i].referenceInfluence = 0.72
+        timeline.events=events; saveCurrentSession(); previewPlayer?.stop(); transportPlayer?.stop(); selectEvent(i)
+        status.stringValue = "MATCHED TO SAVED [\(events[i].kind)] REFERENCE — spectral shape + level preserved"
     }
 
     @objc private func resonanceChanged(_ sender: NSSlider) {
@@ -2178,6 +2266,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         resonanceValueLabel?.stringValue = "\(Int((e.resonanceAmount ?? 0) * 100))%"
         if let hz = e.resonanceHz { resonanceFreqLabel?.stringValue = String(format: "%.1f kHz  Q %.1f", hz / 1000.0, e.resonanceQ ?? 7.0) }
         else { resonanceFreqLabel?.stringValue = "AUTO frequency not set" }
+        spectralTiltSlider?.isEnabled = ["S", "Š", "Z", "C", "Č", "CH"].contains(e.kind)
+        spectralTiltSlider?.doubleValue = e.spectralTilt ?? 0
+        let tilt = e.spectralTilt ?? 0
+        spectralTiltValue?.stringValue = tilt < -0.08 ? "DARK" : (tilt > 0.08 ? "BRIGHT" : "NEUTRAL")
+        flattenSlider?.isEnabled = ["S", "Š", "Z", "C", "Č", "CH"].contains(e.kind)
+        flattenSlider?.doubleValue = e.spectralFlatten ?? 0
+        flattenValue?.stringValue = "\(Int((e.spectralFlatten ?? 0) * 100))%"
+        let refs = learningStore.count(kind: e.kind)
+        referenceInfoLabel?.stringValue = refs > 0 ? "\(refs) saved [\(e.kind)] reference\(refs == 1 ? "" : "s")" : "No saved [\(e.kind)] reference"
         eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, "METHOD \(e.repairMethod ?? "MANUAL") • \(RGRepairAdvisor.qualityText(for: e))")
         refreshAnnotationSidebar()
     }
