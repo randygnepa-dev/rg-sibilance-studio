@@ -1118,9 +1118,13 @@ final class UpdateManager {
                 let base = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/RG Sibilance Studio", isDirectory: true)
                 try fm.createDirectory(at: base, withIntermediateDirectories: true)
                 let source = base.appendingPathComponent("RGSibilanceStudio-\(version).swift")
+                let helper = base.appendingPathComponent("RGAdvancedEngine-\(version).swift")
                 let binary = base.appendingPathComponent("RG Sibilance Studio-\(version)")
                 let marker = base.appendingPathComponent("UPDATED_TO")
                 try data.write(to: source, options: .atomic)
+                guard let helperURL = URL(string: "\(RGRepoRaw)/Sources/RGAdvancedEngine.swift?t=\(Date().timeIntervalSince1970)") else { self.busy = false; return }
+                let helperData = try Data(contentsOf: helperURL)
+                try helperData.write(to: helper, options: .atomic)
 
                 let sdkProcess = Process()
                 let sdkPipe = Pipe()
@@ -1133,7 +1137,7 @@ final class UpdateManager {
 
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-                p.arguments = ["--sdk", "macosx", "swiftc", source.path, "-sdk", sdk, "-o", binary.path, "-framework", "Cocoa", "-framework", "AVFoundation"]
+                p.arguments = ["--sdk", "macosx", "swiftc", source.path, helper.path, "-sdk", sdk, "-o", binary.path, "-framework", "Cocoa", "-framework", "AVFoundation"]
                 try p.run()
                 p.waitUntilExit()
                 guard p.terminationStatus == 0 else {
