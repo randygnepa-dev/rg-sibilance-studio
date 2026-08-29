@@ -72,10 +72,35 @@ jobs:
           <key>CFBundleShortVersionString</key><string>${VERSION}</string>
           <key>CFBundleVersion</key><string>${VERSION}</string>
           <key>LSMinimumSystemVersion</key><string>12.0</string>
+          <key>LSArchitecturePriority</key><array><string>arm64</string><string>x86_64</string></array>
           <key>NSHighResolutionCapable</key><true/>
           </dict></plist>
           PLIST
+          plutil -lint "$APP/Contents/Info.plist"
           codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          file "$APP/Contents/MacOS/RG Sibilance Studio"
+          lipo -info "$APP/Contents/MacOS/RG Sibilance Studio"
+      - name: Launch smoke test
+        shell: bash
+        run: |
+          APP="dist/RG Sibilance Studio.app"
+          LOG="$RUNNER_TEMP/rg-sibilance-smoke.log"
+          set +e
+          "$APP/Contents/MacOS/RG Sibilance Studio" >"$LOG" 2>&1 &
+          PID=$!
+          sleep 4
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "App stayed alive for startup smoke test"
+            kill "$PID" || true
+            wait "$PID" || true
+          else
+            wait "$PID"
+            STATUS=$?
+            cat "$LOG" || true
+            echo "Application exited during startup with status $STATUS"
+            exit 1
+          fi
       - name: Package update
         shell: bash
         run: |
@@ -106,5 +131,3 @@ jobs:
             git commit -m "Publish macOS build ${{ steps.version.outputs.version }}"
             git push
           fi
-
-# trigger 0.4.3 timeline loop playback build
