@@ -1,7 +1,7 @@
-release=0.2.20
-click_badge_plays_region_only=true
-per_event_gain_fader_db=-12,0
-fade_in_ms=0,120
-fade_out_ms=0,120
-preview_applies_gain_and_fades=true
+release=0.2.21
+center_gain_handle=true
+vertical_gain_drag_db=-18,0
+waveform_reflects_event_gain=true
+direct_fade_handles=true
+fade_handles_edit_ms=true
 retry=1
