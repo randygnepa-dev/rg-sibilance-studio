@@ -1,8 +1,10 @@
-release=0.2.24
-reference_ui_redesign=true
-drag_drop_header=true
-editor_waveform_spectrogram_panel=true
-bottom_detection_repair_preview=true
-advanced_under_gear=true
-preserve_existing_functionality=true
+release=0.2.25
+real_processed_region_playback=true
+real_processed_context_playback=true
+real_processed_space_transport=true
+same_gain_crossfade_engine_as_export=true
+smooth_filled_waveform=true
+raw_sample_trace_at_close_zoom=true
+visual_type_trim=true
+preserve_sessions_export_manual_regions=true
 retry=1
