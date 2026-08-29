@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.19"
+let RGVersion = "0.2.20"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -23,6 +23,9 @@ struct SibilanceEvent {
     var score: Double
     var kind: String
     var userLabel: String
+    var gainDB: Double = 0
+    var fadeIn: Double = 0.012
+    var fadeOut: Double = 0.012
 }
 
 final class AudioModel {
@@ -211,6 +214,8 @@ final class TimelineView: NSView {
     var onAddSibilance: ((Double) -> Void)?
     var onDeleteEvent: ((Int) -> Void)?
     var onEventBoundsChanged: ((Int, Double, Double) -> Void)?
+    var onPlayEvent: ((Int) -> Void)?
+    var onEventGainChanged: ((Int, Double) -> Void)?
 
     private var zoom = 1.0
     private var viewStart = 0.0
@@ -224,6 +229,7 @@ final class TimelineView: NSView {
     private var rulerDragging = false
     private var highlightedTime: Double?
     private var boundaryDrag: Int = 0
+    private var gainDragIndex: Int?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -388,6 +394,22 @@ final class TimelineView: NSView {
 
         guard plotRect.contains(p) else { return }
 
+        if let i = eventIndexAtBadge(p) {
+            selectedIndex = i
+            onSelect?(i)
+            playhead = events[i].start
+            highlightedTime = events[i].start
+            onPlayEvent?(i)
+            needsDisplay = true
+            return
+        }
+
+        if let i = selectedIndex, events.indices.contains(i), gainFaderRect(for: i).contains(p) {
+            gainDragIndex = i
+            updateGainDrag(i, x: p.x)
+            return
+        }
+
         if let i = selectedIndex, events.indices.contains(i) {
             let selected = events[i]
             let startX = xForTime(selected.start)
@@ -422,7 +444,9 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if boundaryDrag != 0, let i = selectedIndex, events.indices.contains(i), let m = model {
+        if let i = gainDragIndex, events.indices.contains(i) {
+            updateGainDrag(i, x: p.x)
+        } else if boundaryDrag != 0, let i = selectedIndex, events.indices.contains(i), let m = model {
             var e = events[i]
             let t = min(max(0, timeForX(min(max(p.x, plotRect.minX), plotRect.maxX))), m.duration)
             let minimumLength = 0.015
@@ -466,6 +490,35 @@ final class TimelineView: NSView {
         panning = false
         rulerDragging = false
         boundaryDrag = 0
+        gainDragIndex = nil
+        needsDisplay = true
+    }
+
+    private func eventIndexAtBadge(_ point: NSPoint) -> Int? {
+        for (i, e) in events.enumerated() where e.end >= viewStart && e.start <= viewEnd {
+            let centerX = xForTime(e.peakTime)
+            let selected = i == selectedIndex
+            let width: CGFloat = selected ? 48 : 30
+            let height: CGFloat = selected ? 28 : 20
+            let rect = NSRect(x: centerX - width / 2, y: plotRect.maxY - height - 4, width: width, height: height)
+            if rect.contains(point) { return i }
+        }
+        return nil
+    }
+
+    private func gainFaderRect(for i: Int) -> NSRect {
+        guard events.indices.contains(i) else { return .zero }
+        let centerX = xForTime(events[i].peakTime)
+        return NSRect(x: centerX - 34, y: plotRect.maxY - 57, width: 68, height: 18)
+    }
+
+    private func updateGainDrag(_ i: Int, x: CGFloat) {
+        guard events.indices.contains(i) else { return }
+        let rect = gainFaderRect(for: i)
+        let fraction = min(1, max(0, (x - rect.minX) / max(1, rect.width)))
+        let value = -12.0 + Double(fraction) * 12.0
+        events[i].gainDB = value
+        onEventGainChanged?(i, value)
         needsDisplay = true
     }
 
@@ -642,6 +695,24 @@ final class TimelineView: NSView {
                 badge.stroke()
             }
             badgeText.draw(at: NSPoint(x: centerX - textSize.width / 2, y: badgeY + (badgeH - textSize.height) / 2), withAttributes: attrs)
+
+            if selected {
+                let fader = gainFaderRect(for: i)
+                let lineY = fader.midY
+                let line = NSBezierPath()
+                line.move(to: NSPoint(x: fader.minX + 4, y: lineY))
+                line.line(to: NSPoint(x: fader.maxX - 4, y: lineY))
+                NSColor.white.withAlphaComponent(0.32).setStroke()
+                line.lineWidth = 2
+                line.stroke()
+                let norm = CGFloat((min(0, max(-12, e.gainDB)) + 12) / 12)
+                let knobX = fader.minX + 4 + norm * (fader.width - 8)
+                let knob = NSBezierPath(ovalIn: NSRect(x: knobX - 5, y: lineY - 5, width: 10, height: 10))
+                NSColor.white.setFill()
+                knob.fill()
+                let gattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold), .foregroundColor: NSColor.white.withAlphaComponent(0.85)]
+                String(format: "%.1f dB", e.gainDB).draw(at: NSPoint(x: fader.maxX + 4, y: fader.minY + 3), withAttributes: gattrs)
+            }
         }
     }
 
@@ -856,6 +927,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var typeTrimSlider: NSSlider!
     private var typeTrimValue: NSTextField!
     private var stopMode: NSSegmentedControl!
+    private var fadeInSlider: NSSlider!
+    private var fadeOutSlider: NSSlider!
+    private var fadeInValue: NSTextField!
+    private var fadeOutValue: NSTextField!
 
     private var model = AudioModel()
     private var events: [SibilanceEvent] = []
@@ -865,6 +940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var previewPlayer: AVAudioPlayer?
     private var scrubPlayer: AVAudioPlayer?
     private var stopTimer: Timer?
+    private var fadeTimer: Timer?
     private var loopEnabled = false
     private var keyMonitor: Any?
     private var transportTimer: Timer?
@@ -932,6 +1008,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onAddSibilance = { [weak self] t in self?.addManualS(at: t) }
         timeline.onDeleteEvent = { [weak self] i in self?.deleteEvent(i) }
         timeline.onEventBoundsChanged = { [weak self] i, start, end in self?.eventBoundsChanged(i, start: start, end: end) }
+        timeline.onPlayEvent = { [weak self] i in self?.playRegionOnly(i) }
+        timeline.onEventGainChanged = { [weak self] i, gain in self?.eventGainChanged(i, gain: gain) }
         root.addSubview(timeline)
 
         fileInfo = label("Drop WAV/AIFF directly into the waveform window", size: 11, color: NSColor(hex: 0x778895))
@@ -992,12 +1070,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         typeTrimValue.frame = NSRect(x: pw - 79, y: panelH - 146, width: 62, height: 18)
         p2.addSubview(typeTrimValue)
 
-        let rs = label("Repair Strength", size: 11); rs.frame = NSRect(x: 15, y: panelH - 178, width: 105, height: 18); p2.addSubview(rs)
-        repairSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
-        repairSlider.frame = NSRect(x: 119, y: panelH - 181, width: pw - 150, height: 22)
-        repairSlider.isEnabled = false
-        p2.addSubview(repairSlider)
-        let repairNote = label("TYPE TRIM applies to every event of the selected phoneme", size: 10, color: NSColor(hex: 0x667783))
+        let fi = label("Fade In", size: 10); fi.frame = NSRect(x: 15, y: panelH - 178, width: 48, height: 18); p2.addSubview(fi)
+        fadeInSlider = NSSlider(value: 12, minValue: 0, maxValue: 120, target: self, action: #selector(fadeChanged))
+        fadeInSlider.frame = NSRect(x: 63, y: panelH - 181, width: 94, height: 22)
+        fadeInSlider.isEnabled = false
+        p2.addSubview(fadeInSlider)
+        fadeInValue = label("12 ms", size: 9, weight: .semibold, color: NSColor(hex: 0x9DB4C5))
+        fadeInValue.frame = NSRect(x: 158, y: panelH - 178, width: 42, height: 18)
+        p2.addSubview(fadeInValue)
+
+        let fo = label("Fade Out", size: 10); fo.frame = NSRect(x: 211, y: panelH - 178, width: 54, height: 18); p2.addSubview(fo)
+        fadeOutSlider = NSSlider(value: 12, minValue: 0, maxValue: 120, target: self, action: #selector(fadeChanged))
+        fadeOutSlider.frame = NSRect(x: 265, y: panelH - 181, width: max(70, pw - 330), height: 22)
+        fadeOutSlider.isEnabled = false
+        p2.addSubview(fadeOutSlider)
+        fadeOutValue = label("12 ms", size: 9, weight: .semibold, color: NSColor(hex: 0x9DB4C5))
+        fadeOutValue.frame = NSRect(x: pw - 55, y: panelH - 178, width: 42, height: 18)
+        p2.addSubview(fadeOutValue)
+
+        let repairNote = label("Click phoneme badge: play region only   •   mini fader: event gain", size: 10, color: NSColor(hex: 0x667783))
         repairNote.frame = NSRect(x: 15, y: 18, width: pw - 30, height: 18)
         p2.addSubview(repairNote)
 
@@ -1132,7 +1223,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let trim = typeTrims[e.kind] ?? 0
         typeTrimSlider.doubleValue = trim
         typeTrimValue.stringValue = String(format: "%.1f dB", trim)
-        eventInfo.stringValue = String(format: "#%03d   [%@]   START %.3f s   END %.3f s   LEN %.0f ms   score %.2f   %@   trim %.1f dB", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.score, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, trim)
+        fadeInSlider.isEnabled = true
+        fadeOutSlider.isEnabled = true
+        fadeInSlider.doubleValue = e.fadeIn * 1000
+        fadeOutSlider.doubleValue = e.fadeOut * 1000
+        fadeInValue.stringValue = String(format: "%.0f ms", e.fadeIn * 1000)
+        fadeOutValue.stringValue = String(format: "%.0f ms", e.fadeOut * 1000)
+        eventInfo.stringValue = String(format: "#%03d   [%@]   START %.3f s   END %.3f s   LEN %.0f ms   GAIN %.1f dB   IN %.0f ms   OUT %.0f ms   %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel)
     }
 
     private func eventBoundsChanged(_ i: Int, start: Double, end: Double) {
@@ -1143,6 +1240,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.events = events
         selectEvent(i)
         status.stringValue = String(format: "EVENT #%d REGION → %.3f–%.3f s", i + 1, start, end)
+    }
+
+    @objc private func fadeChanged() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        let maxFade = max(0, (events[i].end - events[i].start) * 0.48)
+        events[i].fadeIn = min(fadeInSlider.doubleValue / 1000.0, maxFade)
+        events[i].fadeOut = min(fadeOutSlider.doubleValue / 1000.0, maxFade)
+        fadeInSlider.doubleValue = events[i].fadeIn * 1000
+        fadeOutSlider.doubleValue = events[i].fadeOut * 1000
+        timeline.events = events
+        selectEvent(i)
+        status.stringValue = String(format: "EVENT #%d CROSSFADES — IN %.0f ms / OUT %.0f ms", i + 1, events[i].fadeIn * 1000, events[i].fadeOut * 1000)
+    }
+
+    private func eventGainChanged(_ i: Int, gain: Double) {
+        guard events.indices.contains(i) else { return }
+        events[i].gainDB = min(0, max(-12, gain))
+        selectEvent(i)
+        status.stringValue = String(format: "EVENT #%d GAIN %.1f dB", i + 1, events[i].gainDB)
     }
 
     @objc private func typeTrimChanged() {
@@ -1204,6 +1320,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             kindPopup.isEnabled = false
             typeTrimSlider.isEnabled = false
             typeTrimValue.stringValue = "0.0 dB"
+            fadeInSlider.isEnabled = false
+            fadeOutSlider.isEnabled = false
             eventInfo.stringValue = "No sibilance selected"
         } else {
             let next = min(i, events.count - 1)
@@ -1298,10 +1416,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         }
     }
 
+    private func playRegionOnly(_ i: Int) {
+        guard events.indices.contains(i), let url = model.url else { return }
+        if transportPlaying { stopTransport() }
+        previewPlayer?.stop()
+        stopTimer?.invalidate()
+        fadeTimer?.invalidate()
+        let e = events[i]
+        do {
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.delegate = self
+            previewPlayer = p
+            let duration = max(0.02, e.end - e.start)
+            let targetVolume = Float(pow(10.0, e.gainDB / 20.0))
+            p.currentTime = e.start
+            p.volume = e.fadeIn > 0.001 ? 0 : targetVolume
+            p.play()
+            if e.fadeIn > 0.001 { p.setVolume(targetVolume, fadeDuration: e.fadeIn) }
+            let fadeOut = min(e.fadeOut, duration * 0.48)
+            if fadeOut > 0.001 {
+                fadeTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, duration - fadeOut), repeats: false) { [weak self, weak p] _ in
+                    guard self?.previewPlayer === p else { return }
+                    p?.setVolume(0, fadeDuration: fadeOut)
+                }
+            }
+            stopTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self, weak p] _ in
+                guard self?.previewPlayer === p else { return }
+                p?.stop()
+                self?.playButton.title = "▶ Play event"
+            }
+            timeline.playhead = e.start
+            playButton.title = "■ Stop"
+            status.stringValue = String(format: "REGION ONLY [%@]   %.3f–%.3f s   %.1f dB", e.kind, e.start, e.end, e.gainDB)
+        } catch {
+            status.stringValue = "REGION PLAYBACK FAILED"
+        }
+    }
+
     @objc private func playSelected() {
         guard let url = model.url else { return }
         do {
             stopTimer?.invalidate()
+            fadeTimer?.invalidate()
             let p = try AVAudioPlayer(contentsOf: url)
             p.delegate = self
             previewPlayer = p
@@ -1329,6 +1485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
     private func finishPreview() {
         previewPlayer?.stop()
+        fadeTimer?.invalidate()
         playButton.title = "▶ Play event"
         if loopEnabled { playSelected() }
     }
