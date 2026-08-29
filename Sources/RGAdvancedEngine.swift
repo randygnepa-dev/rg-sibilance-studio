@@ -8,8 +8,10 @@ struct RGSpectralBands {
 }
 
 enum RGSpectralAnalyzer {
-    static func makeBands(samples: [Float], sampleRate: Double, hopSamples: Int = 512) -> RGSpectralBands {
-        guard !samples.isEmpty, sampleRate > 0 else { return RGSpectralBands(hopSamples: hopSamples, sampleRate: sampleRate, values: []) }
+    static func makeBands(samples: [Float], sampleRate: Double, hopSamples: Int = 256) -> RGSpectralBands {
+        guard !samples.isEmpty, sampleRate > 0 else {
+            return RGSpectralBands(hopSamples: hopSamples, sampleRate: sampleRate, values: [])
+        }
         let edges = [2000.0, 4000.0, 7000.0, 10000.0, 14000.0, min(20000.0, sampleRate * 0.47)]
         let alpha = edges.map { 1.0 - exp(-2.0 * Double.pi * $0 / sampleRate) }
         var lp = Array(repeating: 0.0, count: edges.count)
@@ -51,7 +53,7 @@ enum RGSpectralAnalyzer {
             for b in 0..<5 {
                 let ratio = max(1e-8, Double(frames[i][b]) / maxima[b])
                 let db = 20.0 * log10(ratio)
-                frames[i][b] = Float(min(1.0, max(0.0, (db + 48.0) / 48.0)))
+                frames[i][b] = Float(min(1.0, max(0.0, (db + 54.0) / 54.0)))
             }
         }
         return RGSpectralBands(hopSamples: hopSamples, sampleRate: sampleRate, values: frames)
@@ -82,19 +84,86 @@ enum RGRenderEngine {
     static func gainAt(time: Double, event: SibilanceEvent, typeTrimDB: Double) -> Float {
         let totalDB = min(0.0, event.gainDB + typeTrimDB)
         let target = pow(10.0, totalDB / 20.0)
-        var mix = 1.0
         if event.fadeIn > 0, time < event.start + event.fadeIn {
             let x = min(1.0, max(0.0, (time - event.start) / event.fadeIn))
             let smooth = 0.5 - 0.5 * cos(Double.pi * x)
-            mix = 1.0 + (target - 1.0) * smooth
-        } else if event.fadeOut > 0, time > event.end - event.fadeOut {
+            return Float(1.0 + (target - 1.0) * smooth)
+        }
+        if event.fadeOut > 0, time > event.end - event.fadeOut {
             let x = min(1.0, max(0.0, (event.end - time) / event.fadeOut))
             let smooth = 0.5 - 0.5 * cos(Double.pi * x)
-            mix = 1.0 + (target - 1.0) * smooth
-        } else {
-            mix = target
+            return Float(1.0 + (target - 1.0) * smooth)
         }
-        return Float(mix)
+        return Float(target)
+    }
+
+    static func process(buffer: AVAudioPCMBuffer,
+                        absoluteStartTime: Double,
+                        events: [SibilanceEvent],
+                        typeTrims: [String: Double],
+                        repaired: Bool) {
+        guard repaired, let channels = buffer.floatChannelData else { return }
+        let sr = buffer.format.sampleRate
+        let n = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        guard n > 0 else { return }
+
+        let absoluteEndTime = absoluteStartTime + Double(n) / sr
+        let active = events.filter { $0.end > absoluteStartTime && $0.start < absoluteEndTime }
+        guard !active.isEmpty else { return }
+
+        for event in active {
+            let localStart = max(0, Int(floor((event.start - absoluteStartTime) * sr)))
+            let localEnd = min(n, Int(ceil((event.end - absoluteStartTime) * sr)))
+            guard localEnd > localStart else { continue }
+            let trim = typeTrims[event.kind] ?? 0
+            for i in localStart..<localEnd {
+                let absoluteTime = absoluteStartTime + Double(i) / sr
+                let g = gainAt(time: absoluteTime, event: event, typeTrimDB: trim)
+                for ch in 0..<channelCount { channels[ch][i] *= g }
+            }
+        }
+    }
+
+    static func renderAudition(sourceURL: URL,
+                               events: [SibilanceEvent],
+                               typeTrims: [String: Double],
+                               startTime: Double,
+                               endTime: Double,
+                               repaired: Bool) throws -> URL {
+        let input = try AVAudioFile(forReading: sourceURL)
+        let format = input.processingFormat
+        let sr = format.sampleRate
+        let duration = Double(input.length) / sr
+        let safeStart = min(max(0, startTime), duration)
+        let safeEnd = min(max(safeStart + 0.001, endTime), duration)
+        let startFrame = AVAudioFramePosition(floor(safeStart * sr))
+        let frameCount64 = max(1, AVAudioFramePosition(ceil((safeEnd - safeStart) * sr)))
+        let frameCount = AVAudioFrameCount(min(Int64(UInt32.max), frameCount64))
+
+        input.framePosition = startFrame
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw NSError(domain: "RGAudition", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cannot allocate audition buffer"])
+        }
+        try input.read(into: buffer, frameCount: frameCount)
+        process(buffer: buffer, absoluteStartTime: safeStart, events: events, typeTrims: typeTrims, repaired: repaired)
+
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/RG Sibilance Studio/Audition", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let out = dir.appendingPathComponent("audition-\(UUID().uuidString).caf")
+        let output = try AVAudioFile(forWriting: out, settings: format.settings, commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+        try output.write(from: buffer)
+        return out
+    }
+
+    static func renderFullPreview(sourceURL: URL,
+                                  events: [SibilanceEvent],
+                                  typeTrims: [String: Double],
+                                  repaired: Bool) throws -> URL {
+        let input = try AVAudioFile(forReading: sourceURL)
+        let duration = Double(input.length) / input.processingFormat.sampleRate
+        return try renderAudition(sourceURL: sourceURL, events: events, typeTrims: typeTrims, startTime: 0, endTime: duration, repaired: repaired)
     }
 
     static func export(sourceURL: URL, events: [SibilanceEvent], typeTrims: [String: Double]) throws -> URL {
@@ -105,31 +174,14 @@ enum RGRenderEngine {
             throw NSError(domain: "RGRender", code: 1, userInfo: [NSLocalizedDescriptionKey: "Cannot allocate export buffer"])
         }
         try input.read(into: buffer)
-        guard let channels = buffer.floatChannelData else {
-            throw NSError(domain: "RGRender", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unsupported source audio format"])
-        }
-        let n = Int(buffer.frameLength)
-        let sr = format.sampleRate
-        let channelCount = Int(format.channelCount)
-
-        for event in events {
-            let start = max(0, min(n, Int(floor(event.start * sr))))
-            let end = max(start, min(n, Int(ceil(event.end * sr))))
-            guard end > start else { continue }
-            let trim = typeTrims[event.kind] ?? 0
-            for i in start..<end {
-                let t = Double(i) / sr
-                let g = gainAt(time: t, event: event, typeTrimDB: trim)
-                for ch in 0..<channelCount { channels[ch][i] *= g }
-            }
-        }
+        process(buffer: buffer, absoluteStartTime: 0, events: events, typeTrims: typeTrims, repaired: true)
 
         let stem = sourceURL.deletingPathExtension().lastPathComponent
         let outURL = sourceURL.deletingLastPathComponent().appendingPathComponent(stem + "-RG-SIB.wav")
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: sr,
-            AVNumberOfChannelsKey: channelCount,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: Int(format.channelCount),
             AVLinearPCMBitDepthKey: 24,
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsBigEndianKey: false,
