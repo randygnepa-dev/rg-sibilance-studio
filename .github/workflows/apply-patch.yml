@@ -15,23 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_3_0.py
+        run: python3 scripts/patch_0_3_1.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.3.0"' Sources/RGSibilanceStudio.swift
-          grep -F 'final class RGButton' Sources/RGSibilanceStudio.swift
-          grep -F 'WAVEFORM' Sources/RGSibilanceStudio.swift
-          grep -F 'SPECTROGRAM' Sources/RGSibilanceStudio.swift
-          grep -F 'EDITS & ANNOTATIONS' Sources/RGSibilanceStudio.swift
-          grep -F 'refreshAnnotationSidebar' Sources/RGSibilanceStudio.swift
-          grep -F 'expectedHash' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.3.1"' Sources/RGSibilanceStudio.swift
+          grep -F 'displayMode: Int' Sources/RGSibilanceStudio.swift
+          grep -F 'toggleInspector' Sources/RGSibilanceStudio.swift
+          grep -F 'viewModeChanged' Sources/RGSibilanceStudio.swift
+          grep -F 'WHISTLE' Sources/RGSibilanceStudio.swift
+          grep -F 'resonanceAmount' Sources/RGSibilanceStudio.swift
+          grep -F 'resonanceFilter' Sources/RGAdvancedEngine.swift
           grep -F 'applyPrebuilt' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.3.0\n' > VERSION
+          printf '0.3.1\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.3.0 beta visual shell"
+          git add Sources/RGSibilanceStudio.swift Sources/RGAdvancedEngine.swift VERSION
+          git commit -m "Release 0.3.1 responsive UI, spectrogram and whistle suppressor"
           git push
