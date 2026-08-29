@@ -125,3 +125,5 @@ jobs:
             git commit -m "Publish macOS build ${{ steps.version.outputs.version }}"
             git push
           fi
+
+# trigger 0.2.16
