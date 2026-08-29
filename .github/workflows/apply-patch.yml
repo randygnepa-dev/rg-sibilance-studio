@@ -15,20 +15,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_4_1_protools_ui.py
+        run: python3 scripts/patch_0_4_2_visual_cleanup.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.4.1"' Sources/RGSibilanceStudio.swift
-          grep -F 'CLEAN PRO 0.4.1 PRO TOOLS' Sources/RGSibilanceStudio.swift
-          grep -F 'spectralWhistleEdited' Sources/RGSibilanceStudio.swift
-          grep -F 'onWhistleChange' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.4.2"' Sources/RGSibilanceStudio.swift
+          grep -F 'CLEAN PRO 0.4.2 PRO TOOLS' Sources/RGSibilanceStudio.swift
+          grep -F 'Pro Tools-like clip gain' Sources/RGSibilanceStudio.swift
+          grep -F 'rowH: CGFloat = 30' Sources/RGSibilanceStudio.swift
           grep -F 'NSSegmentedControl(labels:["WAVEFORM"]' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.4.1\n' > VERSION
+          printf '0.4.2\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.4.1 Pro Tools waveform UI"
+          git commit -m "Release 0.4.2 visual cleanup"
           git push
