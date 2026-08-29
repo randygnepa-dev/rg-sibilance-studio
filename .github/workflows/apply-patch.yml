@@ -15,22 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_31.py
+        run: python3 scripts/patch_0_2_32.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.31"' Sources/RGSibilanceStudio.swift
-          grep -F 'var note: String?' Sources/RGSibilanceStudio.swift
-          grep -F 'Pinned event inspector' Sources/RGSibilanceStudio.swift
-          grep -F 'Event annotation' Sources/RGSibilanceStudio.swift
-          grep -F 'pinnedGainChanged' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.32"' Sources/RGSibilanceStudio.swift
+          grep -F 'EDITS & ANNOTATIONS' Sources/RGSibilanceStudio.swift
+          grep -F 'refreshAnnotationSidebar' Sources/RGSibilanceStudio.swift
+          grep -F 'selectAnnotationEvent' Sources/RGSibilanceStudio.swift
+          grep -F 'ADVANCED' Sources/RGSibilanceStudio.swift
           grep -F 'dist/VERSION' Sources/RGSibilanceStudio.swift
           grep -F 'applyPrebuilt' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.31\n' > VERSION
+          printf '0.2.32\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.31 pinned event controls and annotations"
+          git commit -m "Release 0.2.32 visual match and annotations sidebar"
           git push
