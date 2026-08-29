@@ -126,4 +126,4 @@ jobs:
             git push
           fi
 
-# trigger 0.2.26 functional learning/reference/spectral repair
+# retry 0.2.26 after exemplar store collision fix
