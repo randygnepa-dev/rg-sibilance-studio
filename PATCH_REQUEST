@@ -1,8 +1,6 @@
-release=0.4.2
-visual_cleanup=true
-compact_events=true
-no_event_overlap=true
-protools_clip_gain=true
-curved_fades=true
+release=0.4.3
+timeline_loop=true
+ruler_drag_loop=true
+loop_playback=true
 waveform_only=true
-fixed_window=true
+preserve_existing_dsp=true
