@@ -1,6 +1,6 @@
-release=0.2.18
-add_phoneme=K
-type_trim=true
-type_trim_range_db=-12,0
-central_type_control=true
+release=0.2.19
+add_phonemes=Ť,Č
+show_event_regions=true
+editable_region_start_end=true
+strong_selected_phoneme_badge=true
 retry=1
