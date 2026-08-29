@@ -106,4 +106,4 @@ jobs:
             git push
           fi
 
-# 0.2.27 updater entrypoint compatibility
+# trigger verified 0.2.27 build
