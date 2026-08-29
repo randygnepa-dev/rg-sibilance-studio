@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.3.0"
+let RGVersion = "0.3.1"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -34,6 +34,9 @@ struct SibilanceEvent: Codable {
     var donorEnd: Double? = nil
     var blendAmount: Double? = nil
     var referenceInfluence: Double? = nil
+    var resonanceAmount: Double? = nil
+    var resonanceHz: Double? = nil
+    var resonanceQ: Double? = nil
 }
 
 struct FileSession: Codable {
@@ -304,6 +307,7 @@ final class TimelineView: NSView {
     var onEventGainChanged: ((Int, Double) -> Void)?
     var onEventFadesChanged: ((Int, Double, Double) -> Void)?
     var onCreateEventRegion: ((Double, Double) -> Void)?
+    var displayMode: Int = 0 { didSet { needsDisplay = true } }
 
     private var zoom = 1.0
     private var viewStart = 0.0
@@ -760,8 +764,11 @@ final class TimelineView: NSView {
             return
         }
 
-        drawSpectralOverlay(m)
-        drawWaveform(m)
+        if displayMode == 1 {
+            drawSpectralOverlay(m)
+        } else {
+            drawWaveform(m)
+        }
         drawSelectionRegion()
         drawEvents(m)
         drawPlayhead()
@@ -781,10 +788,10 @@ final class TimelineView: NSView {
     private func drawSpectralOverlay(_ m: AudioModel) {
         let spec = m.spectralBands
         guard !spec.values.isEmpty else { return }
-        let labels = ["2–4k", "4–7k", "7–10k", "10–14k", "14–20k"]
-        let spectralHeight = plotRect.height * 0.34
-        let laneH = spectralHeight / 5.0
-        let columns = max(160, Int(plotRect.width / 2))
+        let laneH = plotRect.height / 5.0
+        let columns = max(220, Int(plotRect.width * 0.75))
+        NSColor(hex: 0x0A1118).setFill()
+        plotRect.fill()
         for c in 0..<columns {
             let t = viewStart + Double(c) / Double(max(1, columns - 1)) * visibleDuration
             let frame = min(spec.values.count - 1, max(0, Int(t * spec.sampleRate / Double(spec.hopSamples))))
@@ -792,24 +799,22 @@ final class TimelineView: NSView {
             let x1 = plotRect.minX + CGFloat(c + 1) / CGFloat(columns) * plotRect.width
             for b in 0..<5 {
                 let v = CGFloat(spec.values[frame][b])
-                if v < 0.08 { continue }
+                if v < 0.045 { continue }
                 let y = plotRect.minY + CGFloat(b) * laneH
-                let color: NSColor
-                switch b {
-                case 0: color = NSColor.systemBlue
-                case 1: color = NSColor.systemCyan
-                case 2: color = NSColor.systemTeal
-                case 3: color = NSColor.systemPurple
-                default: color = NSColor.systemPink
-                }
-                color.withAlphaComponent(0.025 + v * 0.19).setFill()
-                NSRect(x: x0, y: y, width: max(1, x1 - x0 + 0.5), height: laneH).fill()
+                let intensity = min(0.72, 0.04 + v * 0.66)
+                NSColor(calibratedWhite: 0.76 + min(0.20, v * 0.20), alpha: intensity).setFill()
+                NSRect(x: x0, y: y, width: max(1, x1 - x0 + 0.5), height: laneH + 0.5).fill()
             }
         }
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.38)]
-        for b in 0..<5 {
-            labels[b].draw(at: NSPoint(x: 7, y: plotRect.minY + CGFloat(b) * laneH + laneH * 0.5 - 5), withAttributes: attrs)
+        let grid = NSBezierPath()
+        for b in 1..<5 {
+            let y = plotRect.minY + CGFloat(b) * laneH
+            grid.move(to: NSPoint(x: plotRect.minX, y: y))
+            grid.line(to: NSPoint(x: plotRect.maxX, y: y))
         }
+        NSColor.white.withAlphaComponent(0.055).setStroke()
+        grid.lineWidth = 0.5
+        grid.stroke()
     }
 
     private func drawWaveform(_ m: AudioModel) {
@@ -1435,6 +1440,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var pinnedNoteLabel: NSTextField!
     private var annotationStack: NSStackView!
     private var annotationCountLabel: NSTextField!
+    private var editorPanel: NSBox!
+    private var annotationsPanel: NSBox!
+    private var inspectorToggleButton: NSButton!
+    private var inspectorHidden = false
+    private var viewTabsControl: NSSegmentedControl!
+    private var resonanceSlider: NSSlider!
+    private var resonanceValueLabel: NSTextField!
+    private var resonanceFreqLabel: NSTextField!
 
     private var model = AudioModel()
     private var events: [SibilanceEvent] = []
@@ -1502,6 +1515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor(hex: 0x080D12).cgColor
         window.contentView = root
+        root.autoresizingMask = [.width, .height]
 
         let inspectorW: CGFloat = 340
         let inspectorGap: CGFloat = 10
@@ -1536,31 +1550,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         analyzeButton = button("⌁  Analyze", action: #selector(analyzeAudio))
         analyzeButton.frame = NSRect(x: 42 + mainW - 138, y: h - 67, width: 126, height: 30)
         analyzeButton.bezelColor = NSColor(hex: 0x1578E8)
+        analyzeButton.autoresizingMask = [.minXMargin, .minYMargin]
         root.addSubview(analyzeButton)
+        inspectorToggleButton = button("Hide Inspector", action: #selector(toggleInspector))
+        inspectorToggleButton.frame = NSRect(x: w - 146, y: h - 67, width: 104, height: 30)
+        inspectorToggleButton.autoresizingMask = [.minXMargin, .minYMargin]
+        root.addSubview(inspectorToggleButton)
         let open = button("▱  Open File", action: #selector(openWav))
         open.frame = NSRect(x: 42 + mainW - 274, y: h - 67, width: 126, height: 30)
+        open.autoresizingMask = [.minXMargin, .minYMargin]
         root.addSubview(open)
 
         let editorY: CGFloat = 246
         let editorH = h - editorY - 112
-        let editor = makePanel(NSRect(x: 42, y: editorY, width: mainW, height: editorH))
+        editorPanel = makePanel(NSRect(x: 42, y: editorY, width: mainW, height: editorH))
+        let editor = editorPanel!
         editor.fillColor = NSColor(hex: 0x0C141B)
+        editor.autoresizingMask = [.width, .height]
         root.addSubview(editor)
 
-        let viewTabs = NSSegmentedControl(labels: ["WAVEFORM", "SPECTROGRAM"], trackingMode: .selectOne, target: nil, action: nil)
-        viewTabs.selectedSegment = 0
-        viewTabs.frame = NSRect(x: 14, y: editorH - 35, width: 206, height: 24)
-        viewTabs.controlSize = .small
-        editor.addSubview(viewTabs)
+        viewTabsControl = NSSegmentedControl(labels: ["WAVEFORM", "SPECTROGRAM"], trackingMode: .selectOne, target: self, action: #selector(viewModeChanged(_:)))
+        viewTabsControl.selectedSegment = 0
+        viewTabsControl.frame = NSRect(x: 14, y: editorH - 35, width: 206, height: 24)
+        viewTabsControl.controlSize = .small
+        viewTabsControl.autoresizingMask = [.minYMargin]
+        editor.addSubview(viewTabsControl)
 
-        let annotationsPanel = makePanel(NSRect(x: 42 + mainW + inspectorGap, y: 44, width: inspectorW, height: h - 144))
+        self.annotationsPanel = makePanel(NSRect(x: 42 + mainW + inspectorGap, y: 44, width: inspectorW, height: h - 144))
+        let annotationsPanel = self.annotationsPanel!
         annotationsPanel.fillColor = NSColor(hex: 0x0A1219)
+        annotationsPanel.autoresizingMask = [.minXMargin, .height]
         root.addSubview(annotationsPanel)
         let annTitle = label("EDITS & ANNOTATIONS", size: 11, weight: .bold, color: .white)
         annTitle.frame = NSRect(x: 16, y: annotationsPanel.bounds.height - 34, width: 210, height: 20)
         annotationsPanel.addSubview(annTitle)
         let annAdd = button("＋ Add", action: #selector(addAnnotation))
         annAdd.frame = NSRect(x: inspectorW - 88, y: annotationsPanel.bounds.height - 40, width: 74, height: 28)
+        annAdd.autoresizingMask = [.minXMargin, .minYMargin]
         annotationsPanel.addSubview(annAdd)
         annotationCountLabel = label("0 edits", size: 10, color: NSColor(hex: 0x71818D))
         annotationCountLabel.frame = NSRect(x: 14, y: 12, width: 100, height: 18)
@@ -1574,15 +1600,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         annotationStack.spacing = 7
         annotationStack.edgeInsets = NSEdgeInsets(top: 4, left: 2, bottom: 4, right: 2)
         annScroll.documentView = annotationStack
+        annScroll.autoresizingMask = [.width, .height]
         annotationsPanel.addSubview(annScroll)
 
         currentTimeLabel = label("00:00.000", size: 16, weight: .bold, color: NSColor(hex: 0x3198FF))
         currentTimeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 16, weight: .bold)
         currentTimeLabel.frame = NSRect(x: 16, y: editorH - 66, width: 150, height: 24)
+        currentTimeLabel.autoresizingMask = [.minYMargin]
         editor.addSubview(currentTimeLabel)
 
         let timeHint = label("locator / selected event", size: 9, color: NSColor(hex: 0x637482))
         timeHint.frame = NSRect(x: 166, y: editorH - 63, width: 150, height: 18)
+        timeHint.autoresizingMask = [.minYMargin]
         editor.addSubview(timeHint)
 
         // Pinned event inspector: stays available while the viewport/time position changes.
@@ -1601,6 +1630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         pinnedNoteLabel.frame = NSRect(x: 560, y: 8, width: max(70, pinned.bounds.width - 570), height: 18)
         pinnedNoteLabel.lineBreakMode = .byTruncatingTail
         pinned.addSubview(pinnedNoteLabel)
+        pinned.autoresizingMask = [.width, .minYMargin]
         editor.addSubview(pinned)
 
         timeline = TimelineView(frame: NSRect(x: 12, y: 74, width: editor.bounds.width - 24, height: editorH - 154))
@@ -1617,6 +1647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onEventGainChanged = { [weak self] i, gain in self?.eventGainChanged(i, gain: gain) }
         timeline.onEventFadesChanged = { [weak self] i, fadeIn, fadeOut in self?.eventFadesChanged(i, fadeIn: fadeIn, fadeOut: fadeOut) }
         timeline.onCreateEventRegion = { [weak self] start, end in self?.createEventFromSelection(start: start, end: end) }
+        timeline.autoresizingMask = [.width, .height]
         editor.addSubview(timeline)
 
         let zoomIn = button("＋", action: #selector(zoomInTimeline)); zoomIn.frame = NSRect(x: 14, y: 42, width: 34, height: 26); editor.addSubview(zoomIn)
@@ -1655,6 +1686,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let p2 = makePanel(NSRect(x: 42 + leftW + gap, y: panelY, width: centerW, height: panelH))
         let pAdv = makePanel(NSRect(x: 42 + leftW + centerW + gap * 2, y: panelY, width: advancedW, height: panelH))
         let p3 = makePanel(NSRect(x: 42 + leftW + centerW + advancedW + gap * 3, y: panelY, width: rightW, height: panelH))
+        p2.autoresizingMask = [.width]
+        pAdv.autoresizingMask = [.minXMargin]
+        p3.autoresizingMask = [.minXMargin]
         root.addSubview(p1); root.addSubview(p2); root.addSubview(pAdv); root.addSubview(p3)
         addTitle("ADVANCED", to: pAdv, y: panelH - 30)
         let advHint = label("Selected event", size: 9, color: NSColor(hex: 0x71818D)); advHint.frame = NSRect(x: 16, y: panelH - 59, width: advancedW - 32, height: 18); pAdv.addSubview(advHint)
@@ -1696,10 +1730,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let less = label("LESS S", size: 9, color: NSColor(hex: 0x738390)); less.frame = NSRect(x: 16, y: panelH - 138, width: 55, height: 16); p2.addSubview(less)
         let more = label("MORE S", size: 9, color: NSColor(hex: 0x738390)); more.frame = NSRect(x: centerW - 76, y: panelH - 138, width: 60, height: 16); p2.addSubview(more)
 
-        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 70, width: 102, height: 32); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
-        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 124, y: 70, width: 120, height: 32); p2.addSubview(morph)
-        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 250, y: 70, width: 120, height: 32); p2.addSubview(blend)
-        applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 18, width: 116, height: 30); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
+        let whistleTitle = label("WHISTLE", size: 10, weight: .bold, color: NSColor(hex: 0xD9E1E7)); whistleTitle.frame = NSRect(x: 16, y: 48, width: 62, height: 18); p2.addSubview(whistleTitle)
+        resonanceSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: self, action: #selector(resonanceChanged(_:)))
+        resonanceSlider.frame = NSRect(x: 78, y: 45, width: 148, height: 22); resonanceSlider.isEnabled = false; p2.addSubview(resonanceSlider)
+        resonanceValueLabel = label("0%", size: 9, weight: .semibold, color: NSColor(hex: 0xB9C8D3)); resonanceValueLabel.frame = NSRect(x: 230, y: 48, width: 34, height: 18); p2.addSubview(resonanceValueLabel)
+        let findWhistle = button("AUTO FIND", action: #selector(autoFindWhistle)); findWhistle.frame = NSRect(x: 268, y: 43, width: 82, height: 26); p2.addSubview(findWhistle)
+        resonanceFreqLabel = label("—", size: 9, color: NSColor(hex: 0x8394A1)); resonanceFreqLabel.frame = NSRect(x: 16, y: 27, width: 150, height: 16); p2.addSubview(resonanceFreqLabel)
+
+        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 4, width: 102, height: 28); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
+        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 124, y: 4, width: 120, height: 28); p2.addSubview(morph)
+        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 250, y: 4, width: 120, height: 28); p2.addSubview(blend)
+        applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 34, width: 116, height: 26); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
 
         let trimLabel = label("TYPE TRIM", size: 10); trimLabel.frame = NSRect(x: 16, y: panelH - 91, width: 78, height: 18); pAdv.addSubview(trimLabel)
         typeTrimSlider = NSSlider(value: 0, minValue: -12, maxValue: 0, target: self, action: #selector(typeTrimChanged)); typeTrimSlider.frame = NSRect(x: 16, y: panelH - 116, width: advancedW - 72, height: 22); typeTrimSlider.isEnabled = false; pAdv.addSubview(typeTrimSlider)
@@ -1775,6 +1816,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         return String(format: "%02d:%02d.%03d", Int(safe) / 60, Int(safe) % 60, Int((safe - floor(safe)) * 1000))
     }
 
+    @objc private func viewModeChanged(_ sender: NSSegmentedControl) {
+        timeline.displayMode = sender.selectedSegment
+        status.stringValue = sender.selectedSegment == 1 ? "SPECTROGRAM VIEW" : "WAVEFORM VIEW"
+    }
+
+    @objc private func toggleInspector() {
+        guard annotationsPanel != nil, editorPanel != nil else { return }
+        let delta: CGFloat = 350
+        inspectorHidden.toggle()
+        annotationsPanel.isHidden = inspectorHidden
+        inspectorToggleButton.title = inspectorHidden ? "Show Inspector" : "Hide Inspector"
+        var f = editorPanel.frame
+        f.size.width += inspectorHidden ? delta : -delta
+        editorPanel.frame = f
+        status.stringValue = inspectorHidden ? "ANNOTATIONS INSPECTOR HIDDEN" : "ANNOTATIONS INSPECTOR VISIBLE"
+    }
+
     @objc private func zoomInTimeline() { timeline.zoomIn() }
     @objc private func zoomOutTimeline() { timeline.zoomOut() }
     @objc private func fitTimeline() { timeline.fitAll() }
@@ -1800,6 +1858,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         selectEvent(i)
         saveCurrentSession()
         status.stringValue = String(format: "REPAIR STRENGTH %d%% — %.1f dB", Int(amount * 100), events[i].gainDB)
+    }
+
+    @objc private func resonanceChanged(_ sender: NSSlider) {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        let amount = min(1, max(0, sender.doubleValue))
+        events[i].resonanceAmount = amount
+        if events[i].resonanceHz == nil { autoSetWhistleFrequency(for: i) }
+        if events[i].resonanceQ == nil { events[i].resonanceQ = 7.0 }
+        events[i].repairMethod = amount > 0 ? "WHISTLE" : events[i].repairMethod
+        resonanceValueLabel.stringValue = "\(Int(amount * 100))%"
+        timeline.events = events
+        saveCurrentSession()
+        previewPlayer?.stop(); transportPlayer?.stop()
+        selectEvent(i)
+        status.stringValue = String(format: "WHISTLE SUPPRESSION %d%% @ %.1f kHz", Int(amount * 100), (events[i].resonanceHz ?? 8500) / 1000.0)
+    }
+
+    private func autoSetWhistleFrequency(for i: Int) {
+        guard events.indices.contains(i) else { return }
+        let fp = model.fingerprint(for: events[i])
+        guard fp.count >= 5 else { events[i].resonanceHz = 8500; events[i].resonanceQ = 7; return }
+        let candidates: [(Int, Double)] = [(1, 5600), (2, 8500), (3, 11600), (4, 15000)]
+        let best = candidates.max { fp[$0.0] < fp[$1.0] }
+        events[i].resonanceHz = best?.1 ?? 8500
+        events[i].resonanceQ = (best?.0 == 2 || best?.0 == 3) ? 8.5 : 6.5
+    }
+
+    @objc private func autoFindWhistle() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { status.stringValue = "SELECT AN EVENT FIRST"; return }
+        autoSetWhistleFrequency(for: i)
+        if (events[i].resonanceAmount ?? 0) < 0.01 { events[i].resonanceAmount = 0.55 }
+        timeline.events = events
+        saveCurrentSession()
+        selectEvent(i)
+        status.stringValue = String(format: "WHISTLE FOUND — %.1f kHz • Q %.1f • suppression %d%%", (events[i].resonanceHz ?? 8500) / 1000.0, events[i].resonanceQ ?? 7.0, Int((events[i].resonanceAmount ?? 0) * 100))
+        playRegionOnly(i)
     }
 
     @objc private func showAdvancedInfo() {
@@ -2079,6 +2173,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         pinnedGainSlider?.isEnabled = true
         pinnedGainSlider?.doubleValue = e.gainDB
         pinnedNoteLabel?.stringValue = (e.note?.isEmpty == false) ? "✎ \(e.note!)" : "No annotation"
+        resonanceSlider?.isEnabled = ["S", "Š", "Z", "C", "Č", "CH"].contains(e.kind)
+        resonanceSlider?.doubleValue = min(1, max(0, e.resonanceAmount ?? 0))
+        resonanceValueLabel?.stringValue = "\(Int((e.resonanceAmount ?? 0) * 100))%"
+        if let hz = e.resonanceHz { resonanceFreqLabel?.stringValue = String(format: "%.1f kHz  Q %.1f", hz / 1000.0, e.resonanceQ ?? 7.0) }
+        else { resonanceFreqLabel?.stringValue = "AUTO frequency not set" }
         eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, "METHOD \(e.repairMethod ?? "MANUAL") • \(RGRepairAdvisor.qualityText(for: e))")
         refreshAnnotationSidebar()
     }

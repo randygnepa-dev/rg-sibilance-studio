@@ -225,6 +225,32 @@ enum RGAuditionMode: Equatable {
 }
 
 extension RGRenderEngine {
+    struct RGBiquad {
+        var b0: Double, b1: Double, b2: Double, a1: Double, a2: Double
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+        mutating func process(_ x: Double) -> Double {
+            let y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
+        }
+    }
+
+    static func resonanceFilter(sampleRate: Double, hz: Double, q: Double, amount: Double) -> RGBiquad {
+        let f = min(sampleRate * 0.45, max(2500.0, hz))
+        let qq = min(18.0, max(1.2, q))
+        let gainDB = -min(15.0, max(0.0, amount) * 15.0)
+        let A = pow(10.0, gainDB / 40.0)
+        let w0 = 2.0 * Double.pi * f / sampleRate
+        let alpha = sin(w0) / (2.0 * qq)
+        let cw = cos(w0)
+        let b0 = 1.0 + alpha * A
+        let b1 = -2.0 * cw
+        let b2 = 1.0 - alpha * A
+        let a0 = 1.0 + alpha / A
+        let a1 = -2.0 * cw
+        let a2 = 1.0 - alpha / A
+        return RGBiquad(b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0)
+    }
     static func repairMix(time: Double, event: SibilanceEvent) -> Double {
         if time < event.start || time > event.end { return 0 }
         if event.fadeIn > 0, time < event.start + event.fadeIn {
@@ -290,9 +316,13 @@ extension RGRenderEngine {
             let bandDB = (e.spectralDB?.count == 5 ? e.spectralDB! : Array(repeating:0.0,count:5))
             let totalDB=min(0.0,e.gainDB+(typeTrims[e.kind] ?? 0))
             let broadbandTarget=pow(10.0,totalDB/20.0)
+            let resonanceAmount=min(1.0,max(0.0,e.resonanceAmount ?? 0.0))
+            let resonanceHz=e.resonanceHz ?? 8500.0
+            let resonanceQ=e.resonanceQ ?? 7.0
 
             for ch in 0..<cc {
                 var lp = Array(repeating:0.0,count:6)
+                var resonance = resonanceFilter(sampleRate: sr, hz: resonanceHz, q: resonanceQ, amount: resonanceAmount)
                 let pre=max(0,start-Int(sr*0.020))
                 var hpLP=0.0
                 let hpAlpha=alpha[0]
@@ -319,6 +349,10 @@ extension RGRenderEngine {
                     var y=shaped*broad
                     if let donor=donor, i-start<donor.count, blend>0 {
                         y += Double(donor[i-start])*targetHFRMS*blend*mix*0.72
+                    }
+                    if resonanceAmount > 0.0001 {
+                        let filtered = resonance.process(y)
+                        y = y + (filtered - y) * mix
                     }
                     channels[ch][i]=Float(y)
                 }
