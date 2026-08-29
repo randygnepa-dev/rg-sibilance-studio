@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.33"
+let RGVersion = "0.3.0"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -845,7 +845,7 @@ final class TimelineView: NSView {
                 if c == 0 { trace.move(to: NSPoint(x: x, y: y)) }
                 else { trace.line(to: NSPoint(x: x, y: y)) }
             }
-            NSColor(hex: 0x42B0FF).setStroke()
+            NSColor(hex: 0xF2F5F7).withAlphaComponent(0.90).setStroke()
             trace.lineWidth = 1.35
             trace.stroke()
         } else {
@@ -886,7 +886,7 @@ final class TimelineView: NSView {
             for pt in tops.dropFirst() { fill.line(to: pt) }
             for pt in bottoms.reversed() { fill.line(to: pt) }
             fill.close()
-            NSColor(hex: 0x269AF4, alpha: 0.42).setFill()
+            NSColor(hex: 0xD8DEE4, alpha: 0.62).setFill()
             fill.fill()
 
             let topPath = NSBezierPath()
@@ -896,7 +896,7 @@ final class TimelineView: NSView {
             for pt in tops.dropFirst() { topPath.line(to: pt) }
             if let first = bottoms.first { bottomPath.move(to: first) }
             for pt in bottoms.dropFirst() { bottomPath.line(to: pt) }
-            NSColor(hex: 0x45B2FF).setStroke()
+            NSColor(hex: 0xF2F5F7).withAlphaComponent(0.86).setStroke()
             topPath.lineWidth = 0.9; bottomPath.lineWidth = 0.9
             topPath.stroke(); bottomPath.stroke()
         }
@@ -1356,6 +1356,53 @@ final class AudioDropView: NSView {
     }
 }
 
+
+final class RGButton: NSButton {
+    enum Role { case primary, secondary, ghost, danger }
+    var role: Role = .secondary { didSet { updateStyle() } }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
+    private func configure() {
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 1
+        font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        focusRingType = .none
+        imagePosition = .imageLeading
+        updateStyle()
+    }
+    private func updateStyle() {
+        switch role {
+        case .primary:
+            layer?.backgroundColor = NSColor(hex: 0x1677E8).cgColor
+            layer?.borderColor = NSColor(hex: 0x3D9BFF).withAlphaComponent(0.65).cgColor
+            contentTintColor = .white
+        case .secondary:
+            layer?.backgroundColor = NSColor(hex: 0x17232D).cgColor
+            layer?.borderColor = NSColor(hex: 0x31424F).cgColor
+            contentTintColor = NSColor(hex: 0xD9E1E7)
+        case .ghost:
+            layer?.backgroundColor = NSColor(hex: 0x101920).withAlphaComponent(0.72).cgColor
+            layer?.borderColor = NSColor(hex: 0x263742).cgColor
+            contentTintColor = NSColor(hex: 0xAAB7C1)
+        case .danger:
+            layer?.backgroundColor = NSColor(hex: 0x3A1B20).cgColor
+            layer?.borderColor = NSColor(hex: 0x7B313C).cgColor
+            contentTintColor = NSColor(hex: 0xFFB5BD)
+        }
+    }
+    override var isHighlighted: Bool {
+        didSet { alphaValue = isHighlighted ? 0.76 : 1.0 }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
     private var window: NSWindow!
     private var status: NSTextField!
@@ -1428,8 +1475,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     }
 
     private func button(_ title: String, action: Selector) -> NSButton {
-        let b = NSButton(title: title, target: self, action: action)
-        b.bezelStyle = .rounded
+        let b = RGButton(title: title, target: self, action: action)
+        if title.contains("Analyze") || title.contains("AUTO REPAIR") || title.contains("Export") { b.role = .primary }
+        else if title == "BAD" { b.role = .danger }
+        else if title.contains("Fit") || title == "＋" || title == "−" || title == "◀" || title == "▶" || title == "■" { b.role = .ghost }
+        else { b.role = .secondary }
         return b
     }
 
@@ -1444,30 +1494,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             defer: false
         )
         window.title = "RG Sibilance Studio \(RGVersion) BETA"
-        window.backgroundColor = NSColor(hex: 0x0A1016)
-        window.titlebarAppearsTransparent = false
+        window.backgroundColor = NSColor(hex: 0x080D12)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor(hex: 0x0A1016).cgColor
+        root.layer?.backgroundColor = NSColor(hex: 0x080D12).cgColor
         window.contentView = root
 
         let inspectorW: CGFloat = 340
         let inspectorGap: CGFloat = 10
         let mainW = w - 84 - inspectorW - inspectorGap
 
+        let topPlate = NSView(frame: NSRect(x: 0, y: h - 96, width: w, height: 96))
+        topPlate.wantsLayer = true
+        topPlate.layer?.backgroundColor = NSColor(hex: 0x0B1218).cgColor
+        topPlate.layer?.borderWidth = 0.5
+        topPlate.layer?.borderColor = NSColor(hex: 0x25343F).cgColor
+        root.addSubview(topPlate)
+
         let title = label("RG Sibilance Studio", size: 20, weight: .bold, color: .white)
-        title.frame = NSRect(x: 56, y: h - 64, width: 280, height: 28)
+        title.frame = NSRect(x: 56, y: h - 58, width: 300, height: 28)
         root.addSubview(title)
         let subtitle = label("Sibilance detection & repair", size: 12, color: NSColor(hex: 0x8D9AA6))
-        subtitle.frame = NSRect(x: 56, y: h - 86, width: 300, height: 18)
+        subtitle.frame = NSRect(x: 56, y: h - 79, width: 300, height: 18)
         root.addSubview(subtitle)
 
         let rgBadge = NSTextField(labelWithString: "RG")
         rgBadge.font = NSFont.systemFont(ofSize: 12, weight: .bold)
         rgBadge.alignment = .center
         rgBadge.textColor = .white
-        rgBadge.frame = NSRect(x: 16, y: h - 70, width: 32, height: 32)
+        rgBadge.frame = NSRect(x: 16, y: h - 64, width: 32, height: 32)
         rgBadge.wantsLayer = true
         rgBadge.layer?.cornerRadius = 16
         rgBadge.layer?.borderWidth = 1.2
@@ -1476,26 +1534,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         root.addSubview(rgBadge)
 
         analyzeButton = button("⌁  Analyze", action: #selector(analyzeAudio))
-        analyzeButton.frame = NSRect(x: 42 + mainW - 152, y: h - 72, width: 140, height: 32)
+        analyzeButton.frame = NSRect(x: 42 + mainW - 138, y: h - 67, width: 126, height: 30)
         analyzeButton.bezelColor = NSColor(hex: 0x1578E8)
         root.addSubview(analyzeButton)
         let open = button("▱  Open File", action: #selector(openWav))
-        open.frame = NSRect(x: 42 + mainW - 302, y: h - 72, width: 140, height: 32)
+        open.frame = NSRect(x: 42 + mainW - 274, y: h - 67, width: 126, height: 30)
         root.addSubview(open)
 
-        let editorY: CGFloat = 274
-        let editorH = h - editorY - 104
+        let editorY: CGFloat = 246
+        let editorH = h - editorY - 112
         let editor = makePanel(NSRect(x: 42, y: editorY, width: mainW, height: editorH))
         editor.fillColor = NSColor(hex: 0x0C141B)
         root.addSubview(editor)
 
         let viewTabs = NSSegmentedControl(labels: ["WAVEFORM", "SPECTROGRAM"], trackingMode: .selectOne, target: nil, action: nil)
         viewTabs.selectedSegment = 0
-        viewTabs.frame = NSRect(x: 14, y: editorH - 34, width: 214, height: 24)
+        viewTabs.frame = NSRect(x: 14, y: editorH - 35, width: 206, height: 24)
+        viewTabs.controlSize = .small
         editor.addSubview(viewTabs)
 
         let annotationsPanel = makePanel(NSRect(x: 42 + mainW + inspectorGap, y: 44, width: inspectorW, height: h - 144))
-        annotationsPanel.fillColor = NSColor(hex: 0x0D161F)
+        annotationsPanel.fillColor = NSColor(hex: 0x0A1219)
         root.addSubview(annotationsPanel)
         let annTitle = label("EDITS & ANNOTATIONS", size: 11, weight: .bold, color: .white)
         annTitle.frame = NSRect(x: 16, y: annotationsPanel.bounds.height - 34, width: 210, height: 20)
@@ -1843,9 +1902,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private func makePanel(_ frame: NSRect) -> NSBox {
         let p = NSBox(frame: frame)
         p.boxType = .custom
-        p.borderColor = NSColor(hex: 0x263540)
-        p.fillColor = NSColor(hex: 0x101820)
-        p.cornerRadius = 8
+        p.borderColor = NSColor(hex: 0x263744)
+        p.fillColor = NSColor(hex: 0x0D151C)
+        p.cornerRadius = 6
         return p
     }
 
