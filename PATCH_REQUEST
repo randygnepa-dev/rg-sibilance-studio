@@ -1,10 +1,12 @@
-release=0.2.32
+release=0.2.33
 visual_match_master=true
+header_compact=true
+waveform_spectrogram_tabs=true
+transport_bar=true
 right_annotations_sidebar=true
 persistent_selected_event=true
-separated_waveform_spectral_layout=true
-four_bottom_sections=true
+four_bottom_sections_no_overlap=true
 live_annotation_comments=true
+sha_cache_fix=true
 prebuilt_updater=true
 preserve_all_features=true
-retry=2
