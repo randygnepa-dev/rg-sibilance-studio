@@ -1,8 +1,8 @@
-release=0.2.30
-focused_editor=true
-remove_duplicate_drop=true
-larger_waveform=true
-simplify_bottom_panels=true
+release=0.2.31
+pinned_event_controls=true
+persistent_selected_event=true
+waveform_annotations=true
+annotation_comments=true
 prebuilt_updater=true
 preserve_all_features=true
 retry=1
