@@ -1,10 +1,5 @@
 release=0.4.0
 clean_pro=true
+swift6_spacing_fix=true
 fixed_window=true
-resize_disabled=true
-replace_build_ui=true
-five_fixed_modules=true
-fixed_events_inspector=true
-spectral_shape_graph=true
-no_overlapping_controls=true
-preserve_existing_dsp=true
+no_overlap=true
