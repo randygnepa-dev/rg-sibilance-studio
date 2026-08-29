@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p build/arm64 build/x86_64 dist
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc Sources/RGSibilanceStudio.swift \
+          xcrun --sdk macosx swiftc Sources/*.swift \
             -sdk "$SDK" \
             -target arm64-apple-macosx12.0 \
             -framework Cocoa -framework AVFoundation \
@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc Sources/RGSibilanceStudio.swift \
+          xcrun --sdk macosx swiftc Sources/*.swift \
             -sdk "$SDK" \
             -target x86_64-apple-macosx12.0 \
             -framework Cocoa -framework AVFoundation \
