@@ -31,12 +31,20 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building RG Sibilance Studio $VERSION"
 
+      - name: Prepare Swift executable entry point
+        shell: bash
+        run: |
+          rm -rf build-src
+          mkdir -p build-src
+          cp Sources/*.swift build-src/
+          mv build-src/RGSibilanceStudio.swift build-src/main.swift
+
       - name: Compile Apple Silicon
         shell: bash
         run: |
           mkdir -p build/arm64 build/x86_64 dist
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc Sources/*.swift \
+          xcrun --sdk macosx swiftc build-src/*.swift \
             -sdk "$SDK" \
             -target arm64-apple-macosx12.0 \
             -framework Cocoa -framework AVFoundation \
@@ -47,7 +55,7 @@ jobs:
         shell: bash
         run: |
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc Sources/*.swift \
+          xcrun --sdk macosx swiftc build-src/*.swift \
             -sdk "$SDK" \
             -target x86_64-apple-macosx12.0 \
             -framework Cocoa -framework AVFoundation \
@@ -57,10 +65,7 @@ jobs:
       - name: Create universal binary
         shell: bash
         run: |
-          lipo -create \
-            build/arm64/RGSibilanceStudio \
-            build/x86_64/RGSibilanceStudio \
-            -output dist/RGSibilanceStudio
+          lipo -create build/arm64/RGSibilanceStudio build/x86_64/RGSibilanceStudio -output dist/RGSibilanceStudio
           chmod +x dist/RGSibilanceStudio
           lipo -info dist/RGSibilanceStudio
 
