@@ -15,22 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_32.py
+        run: python3 scripts/patch_0_2_33.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.32"' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.33"' Sources/RGSibilanceStudio.swift
+          grep -F 'WAVEFORM' Sources/RGSibilanceStudio.swift
+          grep -F 'SPECTROGRAM' Sources/RGSibilanceStudio.swift
           grep -F 'EDITS & ANNOTATIONS' Sources/RGSibilanceStudio.swift
           grep -F 'refreshAnnotationSidebar' Sources/RGSibilanceStudio.swift
-          grep -F 'selectAnnotationEvent' Sources/RGSibilanceStudio.swift
-          grep -F 'ADVANCED' Sources/RGSibilanceStudio.swift
-          grep -F 'dist/VERSION' Sources/RGSibilanceStudio.swift
+          grep -F 'expectedHash' Sources/RGSibilanceStudio.swift
           grep -F 'applyPrebuilt' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.32\n' > VERSION
+          printf '0.2.33\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.32 visual match and annotations sidebar"
+          git commit -m "Release 0.2.33 visual match UI"
           git push
