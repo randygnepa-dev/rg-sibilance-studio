@@ -15,17 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_17.py
+        run: python3 scripts/patch_0_2_18.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.17"' Sources/RGSibilanceStudio.swift
-          grep -F 'func forceRefresh()' Sources/RGSibilanceStudio.swift
-          grep -F '⌘R Refresh latest' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.18"' Sources/RGSibilanceStudio.swift
+          grep -F '"K"' Sources/RGSibilanceStudio.swift
+          grep -F 'TYPE TRIM' Sources/RGSibilanceStudio.swift
+          grep -F 'private func typeTrimChanged' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.17\n' > VERSION
+          printf '0.2.18\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.17 Cmd-R refresh latest interface"
+          git commit -m "Release 0.2.18 K phoneme and type trim"
           git push
