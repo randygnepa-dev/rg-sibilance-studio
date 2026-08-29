@@ -108,3 +108,4 @@ jobs:
           fi
 
 # bridge test: exact two-source legacy updater compile
+# trigger 0.2.28
