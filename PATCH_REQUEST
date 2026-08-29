@@ -1,7 +1,8 @@
-release=0.2.29
+release=0.2.30
+focused_editor=true
+remove_duplicate_drop=true
+larger_waveform=true
+simplify_bottom_panels=true
 prebuilt_updater=true
-verify_sha256=true
-rollback=true
-no_local_swift_compile=true
 preserve_all_features=true
 retry=1
