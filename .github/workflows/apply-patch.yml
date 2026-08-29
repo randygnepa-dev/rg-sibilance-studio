@@ -15,23 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_3_3.py
+        run: python3 scripts/patch_0_4_0_clean_pro.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.3.3"' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.4.0"' Sources/RGSibilanceStudio.swift
+          grep -F 'CLEAN PRO 0.4.0' Sources/RGSibilanceStudio.swift
+          grep -F 'final class RGSpectralShapeView' Sources/RGSibilanceStudio.swift
           grep -F 'SIBILANCE REPAIR' Sources/RGSibilanceStudio.swift
-          grep -F 'SAVE GOOD' Sources/RGSibilanceStudio.swift
-          grep -F 'MATCH' Sources/RGSibilanceStudio.swift
-          grep -F 'spectralTiltChanged' Sources/RGSibilanceStudio.swift
-          grep -F 'matchSelectedToReference' Sources/RGSibilanceStudio.swift
-          grep -F 'resonanceFilter' Sources/RGAdvancedEngine.swift
+          grep -F 'PREVIEW & RENDER' Sources/RGSibilanceStudio.swift
+          grep -F 'REFERENCE' Sources/RGSibilanceStudio.swift
           grep -F 'applyPrebuilt' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.3.3\n' > VERSION
+          printf '0.4.0\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources/RGSibilanceStudio.swift Sources/RGAdvancedEngine.swift VERSION
-          git commit -m "Release 0.3.3 fixed RX-style workspace"
+          git add Sources/RGSibilanceStudio.swift VERSION
+          git commit -m "Release 0.4.0 Clean Pro fixed layout beta"
           git push
