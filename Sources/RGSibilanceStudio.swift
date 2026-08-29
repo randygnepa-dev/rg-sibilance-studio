@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.18"
+let RGVersion = "0.2.19"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -210,6 +210,7 @@ final class TimelineView: NSView {
     var onAudioDrop: ((URL) -> Void)?
     var onAddSibilance: ((Double) -> Void)?
     var onDeleteEvent: ((Int) -> Void)?
+    var onEventBoundsChanged: ((Int, Double, Double) -> Void)?
 
     private var zoom = 1.0
     private var viewStart = 0.0
@@ -222,6 +223,7 @@ final class TimelineView: NSView {
     private var contextEventIndex: Int?
     private var rulerDragging = false
     private var highlightedTime: Double?
+    private var boundaryDrag: Int = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -385,6 +387,27 @@ final class TimelineView: NSView {
         }
 
         guard plotRect.contains(p) else { return }
+
+        if let i = selectedIndex, events.indices.contains(i) {
+            let selected = events[i]
+            let startX = xForTime(selected.start)
+            let endX = xForTime(selected.end)
+            if abs(p.x - startX) <= 9 {
+                boundaryDrag = -1
+                playhead = selected.start
+                highlightedTime = selected.start
+                needsDisplay = true
+                return
+            }
+            if abs(p.x - endX) <= 9 {
+                boundaryDrag = 1
+                playhead = selected.end
+                highlightedTime = selected.end
+                needsDisplay = true
+                return
+            }
+        }
+
         lastDragX = p.x
         panning = event.modifierFlags.contains(.option)
         scrubbing = !panning
@@ -399,7 +422,22 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if rulerDragging {
+        if boundaryDrag != 0, let i = selectedIndex, events.indices.contains(i), let m = model {
+            var e = events[i]
+            let t = min(max(0, timeForX(min(max(p.x, plotRect.minX), plotRect.maxX))), m.duration)
+            let minimumLength = 0.015
+            if boundaryDrag < 0 {
+                e.start = min(t, e.end - minimumLength)
+            } else {
+                e.end = max(t, e.start + minimumLength)
+            }
+            e.peakTime = (e.start + e.end) * 0.5
+            events[i] = e
+            playhead = boundaryDrag < 0 ? e.start : e.end
+            highlightedTime = playhead
+            onEventBoundsChanged?(i, e.start, e.end)
+            needsDisplay = true
+        } else if rulerDragging {
             let dx = p.x - lastDragX
             viewStart -= Double(dx / max(1, plotRect.width)) * visibleDuration
             clampViewStart()
@@ -427,6 +465,7 @@ final class TimelineView: NSView {
         scrubbing = false
         panning = false
         rulerDragging = false
+        boundaryDrag = 0
         needsDisplay = true
     }
 
@@ -532,29 +571,77 @@ final class TimelineView: NSView {
     }
 
     private func drawEvents(_ m: AudioModel) {
-        for (i, e) in events.enumerated() where e.peakTime >= viewStart && e.peakTime <= viewEnd {
-            let x = xForTime(e.peakTime)
+        for (i, e) in events.enumerated() where e.end >= viewStart && e.start <= viewEnd {
+            let startX = xForTime(max(e.start, viewStart))
+            let endX = xForTime(min(e.end, viewEnd))
+            let centerX = xForTime(e.peakTime)
             let color: NSColor
             switch e.userLabel {
             case "GOOD": color = .systemGreen
             case "BAD": color = .systemRed
             case "TARGET": color = .systemBlue
             case "NORMAL": color = .systemGray
-            default: color = e.kind == "T" ? .systemOrange : .systemPink
+            default:
+                if ["T", "Ť", "D", "K", "P", "B"].contains(e.kind) {
+                    color = .systemOrange
+                } else if ["Č", "CH"].contains(e.kind) {
+                    color = .systemPurple
+                } else {
+                    color = .systemPink
+                }
             }
-            let line = NSBezierPath()
-            line.move(to: NSPoint(x: x, y: plotRect.minY))
-            line.line(to: NSPoint(x: x, y: plotRect.maxY))
-            color.setStroke()
-            line.lineWidth = i == selectedIndex ? 2.5 : 0.9
-            line.stroke()
 
-            let badge = NSBezierPath(roundedRect: NSRect(x: x - 8, y: plotRect.maxY - 18, width: 16, height: 16), xRadius: 3, yRadius: 3)
+            let selected = i == selectedIndex
+            let region = NSRect(
+                x: min(startX, endX),
+                y: plotRect.minY,
+                width: max(2, abs(endX - startX)),
+                height: plotRect.height
+            )
+            color.withAlphaComponent(selected ? 0.20 : 0.065).setFill()
+            region.fill()
+
+            let left = NSBezierPath()
+            left.move(to: NSPoint(x: startX, y: plotRect.minY))
+            left.line(to: NSPoint(x: startX, y: plotRect.maxY))
+            color.withAlphaComponent(selected ? 0.95 : 0.38).setStroke()
+            left.lineWidth = selected ? 2.0 : 0.7
+            left.stroke()
+
+            let right = NSBezierPath()
+            right.move(to: NSPoint(x: endX, y: plotRect.minY))
+            right.line(to: NSPoint(x: endX, y: plotRect.maxY))
+            color.withAlphaComponent(selected ? 0.95 : 0.38).setStroke()
+            right.lineWidth = selected ? 2.0 : 0.7
+            right.stroke()
+
+            if selected {
+                for x in [startX, endX] {
+                    let handle = NSBezierPath(roundedRect: NSRect(x: x - 5, y: plotRect.midY - 18, width: 10, height: 36), xRadius: 4, yRadius: 4)
+                    color.setFill()
+                    handle.fill()
+                    NSColor.white.withAlphaComponent(0.9).setStroke()
+                    handle.lineWidth = 1
+                    handle.stroke()
+                }
+            }
+
+            let badgeText = e.kind
+            let badgeFont = selected ? NSFont.boldSystemFont(ofSize: 14) : NSFont.boldSystemFont(ofSize: 9)
+            let attrs: [NSAttributedString.Key: Any] = [.font: badgeFont, .foregroundColor: NSColor.white]
+            let textSize = badgeText.size(withAttributes: attrs)
+            let badgeW = selected ? max(34, textSize.width + 18) : max(18, textSize.width + 8)
+            let badgeH: CGFloat = selected ? 26 : 17
+            let badgeY = plotRect.maxY - badgeH - 5
+            let badge = NSBezierPath(roundedRect: NSRect(x: centerX - badgeW / 2, y: badgeY, width: badgeW, height: badgeH), xRadius: 5, yRadius: 5)
             color.setFill()
             badge.fill()
-            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 9), .foregroundColor: NSColor.white]
-            let s = e.kind.size(withAttributes: attrs)
-            e.kind.draw(at: NSPoint(x: x - s.width / 2, y: plotRect.maxY - 17), withAttributes: attrs)
+            if selected {
+                NSColor.white.withAlphaComponent(0.65).setStroke()
+                badge.lineWidth = 1.2
+                badge.stroke()
+            }
+            badgeText.draw(at: NSPoint(x: centerX - textSize.width / 2, y: badgeY + (badgeH - textSize.height) / 2), withAttributes: attrs)
         }
     }
 
@@ -595,7 +682,7 @@ final class TimelineView: NSView {
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   drag waveform: scrub   •   drag time ruler: move timeline   •   ⌥ drag: pan   •   Space: play/stop".draw(
+        "Scroll: zoom   •   drag waveform: scrub   •   drag region edges: edit START/END   •   drag time ruler: move timeline   •   Space: play/stop".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -844,6 +931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onScrub = { [weak self] t, active in self?.scrub(to: t, active: active) }
         timeline.onAddSibilance = { [weak self] t in self?.addManualS(at: t) }
         timeline.onDeleteEvent = { [weak self] i in self?.deleteEvent(i) }
+        timeline.onEventBoundsChanged = { [weak self] i, start, end in self?.eventBoundsChanged(i, start: start, end: end) }
         root.addSubview(timeline)
 
         fileInfo = label("Drop WAV/AIFF directly into the waveform window", size: 11, color: NSColor(hex: 0x778895))
@@ -886,7 +974,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         typeLabel.frame = NSRect(x: 15, y: panelH - 111, width: 90, height: 18)
         p2.addSubview(typeLabel)
         kindPopup = NSPopUpButton(frame: NSRect(x: 108, y: panelH - 116, width: 118, height: 25), pullsDown: false)
-        kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "T", "D", "K", "P", "B", "F", "CH", "OTHER"])
+        kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "Č", "T", "Ť", "D", "K", "P", "B", "F", "CH", "OTHER"])
         kindPopup.target = self
         kindPopup.action = #selector(kindChanged)
         kindPopup.isEnabled = false
@@ -1044,7 +1132,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let trim = typeTrims[e.kind] ?? 0
         typeTrimSlider.doubleValue = trim
         typeTrimValue.stringValue = String(format: "%.1f dB", trim)
-        eventInfo.stringValue = String(format: "#%03d   %@   %.3f–%.3f s   score %.2f   %@   type trim %.1f dB", i + 1, e.kind, e.start, e.end, e.score, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, trim)
+        eventInfo.stringValue = String(format: "#%03d   [%@]   START %.3f s   END %.3f s   LEN %.0f ms   score %.2f   %@   trim %.1f dB", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.score, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, trim)
+    }
+
+    private func eventBoundsChanged(_ i: Int, start: Double, end: Double) {
+        guard events.indices.contains(i) else { return }
+        events[i].start = start
+        events[i].end = end
+        events[i].peakTime = (start + end) * 0.5
+        timeline.events = events
+        selectEvent(i)
+        status.stringValue = String(format: "EVENT #%d REGION → %.3f–%.3f s", i + 1, start, end)
     }
 
     @objc private func typeTrimChanged() {
