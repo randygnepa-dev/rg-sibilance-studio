@@ -15,18 +15,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/fix_0_4_0_swift6.py
+        run: python3 scripts/patch_0_4_1_protools_ui.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.4.0"' Sources/RGSibilanceStudio.swift
-          grep -F 'CLEAN PRO 0.4.0' Sources/RGSibilanceStudio.swift
-          grep -F 'final class RGSpectralShapeView' Sources/RGSibilanceStudio.swift
-          ! grep -F '=.' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.4.1"' Sources/RGSibilanceStudio.swift
+          grep -F 'CLEAN PRO 0.4.1 PRO TOOLS' Sources/RGSibilanceStudio.swift
+          grep -F 'spectralWhistleEdited' Sources/RGSibilanceStudio.swift
+          grep -F 'onWhistleChange' Sources/RGSibilanceStudio.swift
+          grep -F 'NSSegmentedControl(labels:["WAVEFORM"]' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
-      - name: Commit source
+      - name: Commit source and version
         run: |
+          printf '0.4.1\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources/RGSibilanceStudio.swift
-          git commit -m "Fix Swift 6 syntax in 0.4.0 Clean Pro"
+          git add Sources/RGSibilanceStudio.swift VERSION
+          git commit -m "Release 0.4.1 Pro Tools waveform UI"
           git push
