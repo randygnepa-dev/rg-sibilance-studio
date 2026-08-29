@@ -1,7 +1,7 @@
-release=0.2.21
-center_gain_handle=true
-vertical_gain_drag_db=-18,0
-waveform_reflects_event_gain=true
-direct_fade_handles=true
-fade_handles_edit_ms=true
+release=0.2.22
+remember_last_stage_per_file=true
+restore_if_audio_unchanged=true
+autosave_all_event_edits=true
+shift_drag_create_event_region=true
+choose_event_type_after_selection=true
 retry=1
