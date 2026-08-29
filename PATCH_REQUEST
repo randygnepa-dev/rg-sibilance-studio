@@ -1,6 +1,8 @@
-release=0.2.23
-fix_updater_with_advanced_engine=true
-detailed_waveform=true
-spectral_bands_overlay=true
-export_rg_sib=true
-retry=2
+release=0.2.24
+reference_ui_redesign=true
+drag_drop_header=true
+editor_waveform_spectrogram_panel=true
+bottom_detection_repair_preview=true
+advanced_under_gear=true
+preserve_existing_functionality=true
+retry=1
