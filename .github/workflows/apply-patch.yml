@@ -15,10 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_33.py
+        run: python3 scripts/patch_0_3_0.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.33"' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.3.0"' Sources/RGSibilanceStudio.swift
+          grep -F 'final class RGButton' Sources/RGSibilanceStudio.swift
           grep -F 'WAVEFORM' Sources/RGSibilanceStudio.swift
           grep -F 'SPECTROGRAM' Sources/RGSibilanceStudio.swift
           grep -F 'EDITS & ANNOTATIONS' Sources/RGSibilanceStudio.swift
@@ -28,9 +29,9 @@ jobs:
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.33\n' > VERSION
+          printf '0.3.0\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.33 visual match UI"
+          git commit -m "Release 0.3.0 beta visual shell"
           git push
