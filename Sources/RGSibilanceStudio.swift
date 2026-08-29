@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.16"
+let RGVersion = "0.2.17"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -668,6 +668,10 @@ final class UpdateManager {
         timer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.check() }
     }
 
+    func forceRefresh() {
+        check(force: true)
+    }
+
     private func versionParts(_ v: String) -> [Int] { v.split(separator: ".").map { Int($0) ?? 0 } }
 
     private func newer(_ a: String, than b: String) -> Bool {
@@ -680,14 +684,23 @@ final class UpdateManager {
         return false
     }
 
-    private func check() {
+    private func check(force: Bool = false) {
         guard !busy, let url = URL(string: "\(RGRepoRaw)/VERSION?t=\(Date().timeIntervalSince1970)") else { return }
+        if force {
+            DispatchQueue.main.async { self.onStatus?("REFRESH — checking latest interface…") }
+        }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let self = self, let data = data,
-                  let remote = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  self.newer(remote, than: RGVersion) else { return }
+                  let remote = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                if force { DispatchQueue.main.async { self?.onStatus?("REFRESH FAILED — cannot reach update channel") } }
+                return
+            }
+            let shouldApply = self.newer(remote, than: RGVersion) || force
+            guard shouldApply else { return }
             self.busy = true
-            DispatchQueue.main.async { self.onStatus?("UPDATE \(remote) — applying…") }
+            DispatchQueue.main.async {
+                self.onStatus?(force ? "REFRESHING LATEST INTERFACE — v\(remote)…" : "UPDATE \(remote) — applying…")
+            }
             self.apply(remote)
         }.resume()
     }
@@ -906,7 +919,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         status = label("READY", size: 11, weight: .bold, color: .systemGreen)
         status.frame = NSRect(x: 36, y: 19, width: w - 72, height: 18)
         root.addSubview(status)
-        let ver = label("Native engine   •   Auto update: ON   •   v\(RGVersion)", size: 10, color: NSColor(hex: 0x70808C))
+        let ver = label("Native engine   •   Auto update: ON   •   ⌘R Refresh latest   •   v\(RGVersion)", size: 10, color: NSColor(hex: 0x70808C))
         ver.alignment = .right
         ver.frame = NSRect(x: w - 420, y: 19, width: 380, height: 18)
         root.addSubview(ver)
@@ -1087,6 +1100,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private func installKeyboardTransport() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
+            if event.keyCode == 15 && event.modifierFlags.contains(.command) {
+                self.updater.forceRefresh()
+                return nil
+            }
             if event.keyCode == 49 && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
                 self.toggleTransport()
                 return nil
