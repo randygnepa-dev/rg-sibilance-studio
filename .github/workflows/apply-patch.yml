@@ -1,0 +1,47 @@
+name: Apply RG source patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'PATCH_REQUEST'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply requested patch
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('Sources/RGSibilanceStudio.swift')
+          s = p.read_text()
+          s = s.replace('let RGVersion = "0.2.13"', 'let RGVersion = "0.2.14"')
+          s = s.replace('self.eventInfo.stringValue = "Audio loaded — press Analyze"', 'self.eventInfo.stringValue = "Audio loaded — analyzing automatically…"')
+          old = 'self.status.stringValue = "AUDIO LOADED — vertical fit locked for this file"'
+          new = 'self.status.stringValue = "AUDIO LOADED — starting automatic analysis…"\n                    self.analyzeAudio()'
+          if old not in s:
+              raise SystemExit('Expected loadAudio marker not found; refusing unsafe patch')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+      - name: Validate patch markers
+        shell: bash
+        run: |
+          grep -F 'let RGVersion = "0.2.14"' Sources/RGSibilanceStudio.swift
+          grep -F 'self.analyzeAudio()' Sources/RGSibilanceStudio.swift
+
+      - name: Commit source and version
+        shell: bash
+        run: |
+          printf '0.2.14\n' > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Sources/RGSibilanceStudio.swift VERSION
+          git commit -m "Release 0.2.14 automatic analysis on load"
+          git push
