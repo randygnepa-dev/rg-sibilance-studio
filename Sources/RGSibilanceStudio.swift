@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.14"
+let RGVersion = "0.2.15"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -208,6 +208,8 @@ final class TimelineView: NSView {
     var onSelect: ((Int) -> Void)?
     var onScrub: ((Double, Bool) -> Void)?
     var onAudioDrop: ((URL) -> Void)?
+    var onAddSibilance: ((Double) -> Void)?
+    var onDeleteEvent: ((Int) -> Void)?
 
     private var zoom = 1.0
     private var viewStart = 0.0
@@ -216,6 +218,8 @@ final class TimelineView: NSView {
     private var panning = false
     private var lastDragX: CGFloat = 0
     private var dragActive = false
+    private var contextTime: Double = 0
+    private var contextEventIndex: Int?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -224,6 +228,8 @@ final class TimelineView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var acceptsFirstResponder: Bool { true }
 
     private var plotRect: NSRect {
         NSRect(x: 54, y: 30, width: max(120, bounds.width - 76), height: max(90, bounds.height - 52))
@@ -302,10 +308,66 @@ final class TimelineView: NSView {
         needsDisplay = true
     }
 
+    private func eventIndexNear(x: CGFloat, tolerance: CGFloat = 11) -> Int? {
+        var best: Int?
+        var distance = CGFloat.greatestFiniteMagnitude
+        for (i, e) in events.enumerated() where e.peakTime >= viewStart && e.peakTime <= viewEnd {
+            let d = abs(xForTime(e.peakTime) - x)
+            if d <= tolerance && d < distance {
+                distance = d
+                best = i
+            }
+        }
+        return best
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard model != nil else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        guard plotRect.contains(p) else { return }
+        contextTime = timeForX(p.x)
+        contextEventIndex = eventIndexNear(x: p.x)
+        playhead = contextTime
+        window?.makeFirstResponder(self)
+
+        let menu = NSMenu()
+        if let i = contextEventIndex {
+            selectedIndex = i
+            onSelect?(i)
+            let item = NSMenuItem(title: "Delete Sibilance", action: #selector(contextDeleteSibilance), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        } else {
+            let item = NSMenuItem(title: "Add Sibilance", action: #selector(contextAddSibilance), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func contextAddSibilance() {
+        onAddSibilance?(contextTime)
+    }
+
+    @objc private func contextDeleteSibilance() {
+        guard let i = contextEventIndex else { return }
+        onDeleteEvent?(i)
+        contextEventIndex = nil
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if (event.keyCode == 51 || event.keyCode == 117), let i = selectedIndex {
+            onDeleteEvent?(i)
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
         guard model != nil else { return }
         let p = convert(event.locationInWindow, from: nil)
         guard plotRect.contains(p) else { return }
+        window?.makeFirstResponder(self)
         lastDragX = p.x
         panning = event.modifierFlags.contains(.option)
         scrubbing = !panning
@@ -475,7 +537,7 @@ final class TimelineView: NSView {
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   horizontal scroll: pan   •   drag: scrub/listen   •   ⌥ drag: pan".draw(
+        "Scroll: zoom   •   drag: scrub   •   ⌥ drag: pan   •   right-click: add/delete S   •   Delete: remove selected".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -699,6 +761,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onAudioDrop = { [weak self] url in self?.loadAudio(url) }
         timeline.onSelect = { [weak self] i in self?.selectEvent(i) }
         timeline.onScrub = { [weak self] t, active in self?.scrub(to: t, active: active) }
+        timeline.onAddSibilance = { [weak self] t in self?.addManualS(at: t) }
+        timeline.onDeleteEvent = { [weak self] i in self?.deleteEvent(i) }
         root.addSubview(timeline)
 
         fileInfo = label("Drop WAV/AIFF directly into the waveform window", size: 11, color: NSColor(hex: 0x778895))
@@ -881,13 +945,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     @objc private func markNormal() { mark("NORMAL") }
 
     @objc private func markManualS() {
+        addManualS(at: timeline.playhead)
+    }
+
+    private func addManualS(at t: Double) {
         guard model.duration > 0 else { return }
-        let t = timeline.playhead
-        let e = SibilanceEvent(start: max(0, t - 0.05), end: min(model.duration, t + 0.10), peakTime: t, score: 1, kind: "S", userLabel: "")
+        let clamped = min(max(0, t), model.duration)
+        let e = SibilanceEvent(start: max(0, clamped - 0.05), end: min(model.duration, clamped + 0.10), peakTime: clamped, score: 1, kind: "S", userLabel: "TARGET")
         events.append(e)
         events.sort { $0.peakTime < $1.peakTime }
         timeline.events = events
-        if let i = events.firstIndex(where: { abs($0.peakTime - t) < 0.0001 }) { selectEvent(i) }
+        timeline.playhead = clamped
+        detectedLabel.stringValue = "Detected: \(events.count) events"
+        if let i = events.firstIndex(where: { abs($0.peakTime - clamped) < 0.0001 }) { selectEvent(i) }
+        status.stringValue = "MANUAL SIBILANCE ADDED"
+    }
+
+    private func deleteEvent(_ i: Int) {
+        guard events.indices.contains(i) else { return }
+        events.remove(at: i)
+        timeline.events = events
+        detectedLabel.stringValue = "Detected: \(events.count) events"
+        if events.isEmpty {
+            timeline.selectedIndex = nil
+            eventInfo.stringValue = "No sibilance selected"
+        } else {
+            let next = min(i, events.count - 1)
+            selectEvent(next)
+            timeline.playhead = events[next].peakTime
+        }
+        status.stringValue = "SIBILANCE REMOVED"
     }
 
     @objc private func previousEvent() {
