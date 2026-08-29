@@ -1,5 +1,6 @@
-release=0.2.17
-cmd_r_refresh_latest=true
-force_update_check=true
-force_reload_same_version=true
+release=0.2.18
+add_phoneme=K
+type_trim=true
+type_trim_range_db=-12,0
+central_type_control=true
 retry=1
