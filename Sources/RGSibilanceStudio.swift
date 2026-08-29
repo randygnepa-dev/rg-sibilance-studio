@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.25"
+let RGVersion = "0.2.26"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -26,6 +26,13 @@ struct SibilanceEvent: Codable {
     var gainDB: Double = 0
     var fadeIn: Double = 0.012
     var fadeOut: Double = 0.012
+    var spectralDB: [Double]? = nil
+    var repairMethod: String? = nil
+    var donorPath: String? = nil
+    var donorStart: Double? = nil
+    var donorEnd: Double? = nil
+    var blendAmount: Double? = nil
+    var referenceInfluence: Double? = nil
 }
 
 struct FileSession: Codable {
@@ -136,6 +143,21 @@ final class AudioModel {
         rms = samples.isEmpty ? 0 : Float(sqrt(energy / Double(samples.count)))
         buildOverview(binCount: 131072)
         spectralBands = RGSpectralAnalyzer.makeBands(samples: samples, sampleRate: sampleRate, hopSamples: 256)
+    }
+
+    func fingerprint(for event: SibilanceEvent) -> [Double] {
+        let spec = spectralBands
+        guard !spec.values.isEmpty else { return Array(repeating: 0.0, count: 5) }
+        let a = max(0, min(spec.values.count - 1, Int(event.start * spec.sampleRate / Double(spec.hopSamples))))
+        let b = max(a + 1, min(spec.values.count, Int(event.end * spec.sampleRate / Double(spec.hopSamples)) + 1))
+        var sum = Array(repeating: 0.0, count: 5)
+        var count = 0.0
+        for i in a..<b {
+            for band in 0..<5 { sum[band] += Double(spec.values[i][band]) }
+            count += 1
+        }
+        guard count > 0 else { return sum }
+        return sum.map { $0 / count }
     }
 
     private func buildOverview(binCount: Int) {
@@ -1319,6 +1341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private let progressUI = AnalysisProgressController()
     private let updater = UpdateManager()
     private let sessionStore = SessionStore()
+    private let learningStore = RGLearningStore()
     private var previewPlayer: AVAudioPlayer?
     private var scrubPlayer: AVAudioPlayer?
     private var transportPlayer: AVAudioPlayer?
@@ -1330,6 +1353,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var transportPlaying = false
     private var transportStartTime: Double = 0
     private var typeTrims: [String: Double] = [:]
+    private var externalReferenceURL: URL?
+    private var externalReferenceModel: AudioModel?
+    private var externalReferenceEvents: [SibilanceEvent] = []
+    private var levelMatchedAudition = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildUI()
@@ -1482,8 +1509,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let more = label("MORE S", size: 9, color: NSColor(hex: 0x738390)); more.frame = NSRect(x: centerW - 76, y: panelH - 138, width: 60, height: 16); p2.addSubview(more)
 
         autoRepairButton = button("Repair", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 70, width: 108, height: 34); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
-        let morph = button("Reference Morph", action: #selector(referenceModeInfo)); morph.frame = NSRect(x: 130, y: 70, width: 140, height: 34); p2.addSubview(morph)
-        let blend = button("Reference Blend", action: #selector(referenceModeInfo)); blend.frame = NSRect(x: 276, y: 70, width: 140, height: 34); p2.addSubview(blend)
+        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 130, y: 70, width: 140, height: 34); p2.addSubview(morph)
+        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 276, y: 70, width: 140, height: 34); p2.addSubview(blend)
         applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 18, width: 116, height: 30); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
 
         let trimLabel = label("TYPE TRIM", size: 10); trimLabel.frame = NSRect(x: 16, y: 22, width: 78, height: 18); p2.addSubview(trimLabel)
@@ -1497,7 +1524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
         addTitle("PREVIEW", to: p3, y: panelH - 30)
         playButton = button("▶  Play", action: #selector(playSelected)); playButton.frame = NSRect(x: 16, y: panelH - 76, width: 132, height: 36); p3.addSubview(playButton)
-        auditionMode = NSSegmentedControl(labels: ["ORIGINAL", "REPAIR"], trackingMode: .selectOne, target: self, action: #selector(auditionModeChanged)); auditionMode.selectedSegment = 1; auditionMode.frame = NSRect(x: 156, y: panelH - 77, width: rightW - 260, height: 30); p3.addSubview(auditionMode)
+        auditionMode = NSSegmentedControl(labels: ["ORIG", "REPAIR", "DELTA", "S ONLY"], trackingMode: .selectOne, target: self, action: #selector(auditionModeChanged)); auditionMode.selectedSegment = 1; auditionMode.frame = NSRect(x: 156, y: panelH - 77, width: rightW - 260, height: 30); p3.addSubview(auditionMode)
         loopButton = button("↻ Loop", action: #selector(toggleLoop)); loopButton.frame = NSRect(x: rightW - 96, y: panelH - 76, width: 80, height: 36); p3.addSubview(loopButton)
 
         let outTitle = label("OUTPUT", size: 11, weight: .bold, color: .white); outTitle.frame = NSRect(x: 16, y: panelH - 126, width: 100, height: 18); p3.addSubview(outTitle)
@@ -1564,8 +1591,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         status.stringValue = "ADVANCED — direct event handles, TYPE TRIM, crossfades and detector controls remain available"
     }
 
-    @objc private func referenceModeInfo() {
-        status.stringValue = "REFERENCE MODE — engine hook ready; current safe repair remains nondestructive"
+    private func referenceExemplar(for event: SibilanceEvent) -> RGExemplar? {
+        if let learned = learningStore.best(kind: event.kind, excludingPath: model.url?.path) { return learned }
+        if let learned = learningStore.best(kind: event.kind, excludingPath: nil) { return learned }
+        if let refModel = externalReferenceModel, let refURL = externalReferenceURL, !externalReferenceEvents.isEmpty {
+            let candidates = externalReferenceEvents.filter { $0.kind == event.kind || event.kind == "S" || $0.kind == "S" }
+            let donor = (candidates.isEmpty ? externalReferenceEvents : candidates).max { $0.score < $1.score }
+            if let d = donor {
+                return RGExemplar(kind: event.kind, fingerprint: refModel.fingerprint(for: d), duration: d.end - d.start, sourcePath: refURL.path, start: d.start, end: d.end, createdAt: Date().timeIntervalSince1970)
+            }
+        }
+        return nil
+    }
+
+    private func ensureReferenceLoaded() -> Bool {
+        if externalReferenceModel != nil { return true }
+        let p = NSOpenPanel()
+        p.title = "Choose reference vocal"
+        p.allowedFileTypes = ["wav", "wave", "aif", "aiff"]
+        p.allowsMultipleSelection = false
+        guard p.runModal() == .OK, let url = p.url else { return false }
+        do {
+            let m = AudioModel()
+            try m.load(url)
+            let found = detector.detect(samples: m.samples, sampleRate: m.sampleRate, sensitivity: 0.72) { _ in }
+            externalReferenceURL = url
+            externalReferenceModel = m
+            externalReferenceEvents = found
+            status.stringValue = "REFERENCE LOADED — \(url.lastPathComponent) • \(found.count) candidate events"
+            return true
+        } catch {
+            status.stringValue = "REFERENCE LOAD FAILED — \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func spectralMatch(target: [Double], reference: [Double], influence: Double, safeOnly: Bool) -> [Double] {
+        var out: [Double] = []
+        for i in 0..<5 {
+            let deltaNorm = (reference[i] - target[i])
+            var db = deltaNorm * 18.0 * influence
+            if safeOnly { db = min(0, db) }
+            db = min(3.0, max(-10.0, db))
+            // Protect top air band more strongly.
+            if i == 4 { db = min(1.5, max(-4.0, db)) }
+            out.append(db)
+        }
+        return out
+    }
+
+    @objc private func referenceMorphSelected() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { status.stringValue = "SELECT AN EVENT FIRST"; return }
+        var exemplar = referenceExemplar(for: events[i])
+        if exemplar == nil {
+            guard ensureReferenceLoaded() else { status.stringValue = "MARK A GOOD EVENT OR LOAD A REFERENCE"; return }
+            exemplar = referenceExemplar(for: events[i])
+        }
+        guard let ex = exemplar else { status.stringValue = "NO MATCHING REFERENCE EVENT"; return }
+        let target = model.fingerprint(for: events[i])
+        events[i].spectralDB = spectralMatch(target: target, reference: ex.fingerprint, influence: 0.68, safeOnly: false)
+        events[i].repairMethod = "MORPH"
+        events[i].referenceInfluence = 0.68
+        events[i].donorPath = nil
+        events[i].blendAmount = nil
+        timeline.events = events
+        previewPlayer?.stop(); transportPlayer?.stop()
+        selectEvent(i); saveCurrentSession()
+        status.stringValue = "REFERENCE MORPH — [\(events[i].kind)] 68% • Air protected"
+        playRegionOnly(i)
+    }
+
+    @objc private func referenceBlendSelected() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { status.stringValue = "SELECT AN EVENT FIRST"; return }
+        var exemplar = referenceExemplar(for: events[i])
+        if exemplar == nil {
+            guard ensureReferenceLoaded() else { status.stringValue = "MARK A GOOD EVENT OR LOAD A REFERENCE"; return }
+            exemplar = referenceExemplar(for: events[i])
+        }
+        guard let ex = exemplar else { status.stringValue = "NO MATCHING REFERENCE EVENT"; return }
+        let target = model.fingerprint(for: events[i])
+        events[i].spectralDB = spectralMatch(target: target, reference: ex.fingerprint, influence: 0.38, safeOnly: false)
+        events[i].repairMethod = "BLEND"
+        events[i].referenceInfluence = 0.38
+        events[i].donorPath = ex.sourcePath
+        events[i].donorStart = ex.start
+        events[i].donorEnd = ex.end
+        events[i].blendAmount = 0.28
+        timeline.events = events
+        previewPlayer?.stop(); transportPlayer?.stop()
+        selectEvent(i); saveCurrentSession()
+        status.stringValue = "REFERENCE BLEND — donor noise 28% + spectral match"
+        playRegionOnly(i)
     }
 
     private func makePanel(_ frame: NSRect) -> NSBox {
@@ -1628,7 +1744,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                         self.timeline.selectedIndex = session.events.isEmpty ? nil : restoredIndex
                         self.timeline.playhead = min(m.duration, max(0, session.playhead ?? 0))
                         self.sensitivitySlider.doubleValue = min(1, max(0, session.sensitivity ?? self.sensitivitySlider.doubleValue))
-                        self.auditionMode.selectedSegment = min(1, max(0, session.auditionMode ?? 1))
+                        self.auditionMode.selectedSegment = min(3, max(0, session.auditionMode ?? 1))
                         self.exportButton.isEnabled = true
                         self.detectedLabel.stringValue = "Restored: \(session.events.count) events"
                         self.detectedFooter?.stringValue = "Detected: \(session.events.count) events"
@@ -1742,7 +1858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutValue.stringValue = String(format: "%.0f ms", e.fadeOut * 1000)
         autoRepairButton.isEnabled = true
         applySimilarButton.isEnabled = true
-        eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, RGRepairAdvisor.qualityText(for: e))
+        eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, "METHOD \(e.repairMethod ?? "MANUAL") • \(RGRepairAdvisor.qualityText(for: e))")
     }
 
     private func eventBoundsChanged(_ i: Int, start: Double, end: Double) {
@@ -1829,7 +1945,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         status.stringValue = "EVENT #\(i + 1) MARKED \(value)"
     }
 
-    @objc private func markGood() { mark("GOOD") }
+    @objc private func markGood() {
+        mark("GOOD")
+        guard let i = timeline.selectedIndex, events.indices.contains(i), let url = model.url else { return }
+        let e = events[i]
+        let ex = RGExemplar(kind: e.kind, fingerprint: model.fingerprint(for: e), duration: e.end - e.start, sourcePath: url.path, start: e.start, end: e.end, createdAt: Date().timeIntervalSince1970)
+        learningStore.add(ex)
+        status.stringValue = "GOOD EXEMPLAR SAVED — [\(e.kind)] • library \(learningStore.count(kind: e.kind))"
+    }
     @objc private func markBad() { mark("BAD") }
     @objc private func markTarget() { mark("TARGET") }
     @objc private func markNormal() { mark("NORMAL") }
@@ -1917,14 +2040,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         guard let url = model.url, model.duration > 0 else { return }
         previewPlayer?.stop()
         stopTimer?.invalidate()
-        let repaired = auditionMode?.selectedSegment != 0
+        let mode = RGAuditionMode.from(segment: auditionMode?.selectedSegment ?? 1)
+        let repaired = mode != .original
         transportPlayer?.stop()
         transportPlayer = nil
         do {
             let p: AVAudioPlayer
             if repaired {
                 status.stringValue = "RENDERING REPAIR PREVIEW…"
-                let rendered = try RGRenderEngine.renderFullPreview(sourceURL: url, events: events, typeTrims: typeTrims, repaired: true)
+                let rendered = try RGRenderEngine.renderFullPreviewMode(sourceURL: url, events: events, typeTrims: typeTrims, mode: mode, levelMatched: levelMatchedAudition)
                 p = try AVAudioPlayer(contentsOf: rendered)
                 transportPlayer = p
             } else if let original = scrubPlayer {
@@ -1938,7 +2062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             p.play()
             transportPlaying = true
             playButton.title = "■ Stop"
-            status.stringValue = repaired ? "PLAYING REPAIR — rendered event gain + TYPE TRIM + crossfades" : "PLAYING ORIGINAL"
+            status.stringValue = repaired ? "PLAYING \(mode.displayName) — rendered DSP" : "PLAYING ORIGINAL"
             transportTimer?.invalidate()
             transportTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
                 guard let self = self, let player = self.activeTransportPlayer() else { return }
@@ -1994,9 +2118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         stopTimer?.invalidate()
         fadeTimer?.invalidate()
         let e = events[i]
-        let repaired = auditionMode?.selectedSegment != 0
+        let mode = RGAuditionMode.from(segment: auditionMode?.selectedSegment ?? 1)
         do {
-            let rendered = try RGRenderEngine.renderAudition(sourceURL: url, events: events, typeTrims: typeTrims, startTime: e.start, endTime: e.end, repaired: repaired)
+            let rendered = try RGRenderEngine.renderAuditionMode(sourceURL: url, events: events, typeTrims: typeTrims, startTime: e.start, endTime: e.end, mode: mode, levelMatched: levelMatchedAudition)
             let p = try AVAudioPlayer(contentsOf: rendered)
             p.delegate = self
             previewPlayer = p
@@ -2005,8 +2129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             timeline.playhead = e.start
             currentTimeLabel?.stringValue = formatTime(e.start)
             playButton.title = "■ Stop"
-            let effectiveDB = repaired ? min(0, e.gainDB + (typeTrims[e.kind] ?? 0)) : 0
-            status.stringValue = String(format: "REGION %@ [%@] %.3f–%.3f s  %.1f dB  IN %.0f / OUT %.0f ms", repaired ? "REPAIR" : "ORIGINAL", e.kind, e.start, e.end, effectiveDB, e.fadeIn * 1000, e.fadeOut * 1000)
+            let effectiveDB = mode == .original ? 0 : min(0, e.gainDB + (typeTrims[e.kind] ?? 0))
+            status.stringValue = String(format: "REGION %@ [%@] %.3f–%.3f s  %.1f dB  IN %.0f / OUT %.0f ms", mode.displayName, e.kind, e.start, e.end, effectiveDB, e.fadeIn * 1000, e.fadeOut * 1000)
             stopTimer = Timer.scheduledTimer(withTimeInterval: max(0.02, e.end - e.start), repeats: false) { [weak self] _ in
                 self?.previewPlayer?.stop()
                 self?.playButton.title = "▶  Play"
@@ -2022,20 +2146,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         transportPlaying = false
         transportTimer?.invalidate()
         saveCurrentSession()
-        status.stringValue = auditionMode.selectedSegment == 0 ? "A/B — ORIGINAL" : "A/B — REPAIR"
+        status.stringValue = "AUDITION — \(RGAuditionMode.from(segment: auditionMode.selectedSegment).displayName)"
         if let i = timeline.selectedIndex { playRegionOnly(i) }
     }
 
     @objc private func autoRepairSelected() {
         guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
         let length = max(0.015, events[i].end - events[i].start)
-        events[i].gainDB = RGRepairAdvisor.recommendedGain(for: events[i])
+        let base = RGRepairAdvisor.recommendedGain(for: events[i])
+        // Minimum intervention: broadband correction is deliberately smaller when a learned spectral target exists.
+        if let ex = referenceExemplar(for: events[i]) {
+            let target = model.fingerprint(for: events[i])
+            events[i].spectralDB = spectralMatch(target: target, reference: ex.fingerprint, influence: 0.52, safeOnly: true)
+            events[i].gainDB = max(-4.0, base * 0.48)
+            events[i].repairMethod = "SELF SAFE"
+            events[i].referenceInfluence = 0.52
+        } else {
+            events[i].spectralDB = nil
+            events[i].gainDB = base
+            events[i].repairMethod = "GAIN SAFE"
+        }
         events[i].fadeIn = min(0.018, length * 0.22)
         events[i].fadeOut = min(0.018, length * 0.22)
         timeline.events = events
+        previewPlayer?.stop(); transportPlayer?.stop()
         selectEvent(i)
         saveCurrentSession()
-        status.stringValue = String(format: "AUTO SAFE — [%@] %.1f dB", events[i].kind, events[i].gainDB)
+        status.stringValue = String(format: "AUTO SAFE — [%@] %.1f dB • %@", events[i].kind, events[i].gainDB, events[i].repairMethod ?? "SAFE")
         playRegionOnly(i)
     }
 
@@ -2047,6 +2184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             events[j].gainDB = source.gainDB
             events[j].fadeIn = min(source.fadeIn, max(0, (events[j].end - events[j].start) * 0.48))
             events[j].fadeOut = min(source.fadeOut, max(0, (events[j].end - events[j].start) * 0.48))
+            events[j].spectralDB = source.spectralDB
+            events[j].repairMethod = source.repairMethod
+            events[j].referenceInfluence = source.referenceInfluence
+            events[j].donorPath = source.donorPath
+            events[j].donorStart = source.donorStart
+            events[j].donorEnd = source.donorEnd
+            events[j].blendAmount = source.blendAmount
             changed += 1
         }
         timeline.events = events
@@ -2087,15 +2231,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                 let e = events[i]
                 let pre = max(0, e.start - 0.30)
                 let post = min(model.duration, e.end + 0.40)
-                let repaired = auditionMode?.selectedSegment != 0
-                let rendered = try RGRenderEngine.renderAudition(sourceURL: url, events: events, typeTrims: typeTrims, startTime: pre, endTime: post, repaired: repaired)
+                let mode = RGAuditionMode.from(segment: auditionMode?.selectedSegment ?? 1)
+                let rendered = try RGRenderEngine.renderAuditionMode(sourceURL: url, events: events, typeTrims: typeTrims, startTime: pre, endTime: post, mode: mode, levelMatched: levelMatchedAudition)
                 let p = try AVAudioPlayer(contentsOf: rendered)
                 p.delegate = self
                 previewPlayer = p
                 p.currentTime = 0
                 p.play()
                 playButton.title = "■ Stop"
-                status.stringValue = repaired ? "CONTEXT — REPAIR" : "CONTEXT — ORIGINAL"
+                status.stringValue = "CONTEXT — \(mode.displayName)"
                 stopTimer = Timer.scheduledTimer(withTimeInterval: max(0.1, post - pre), repeats: false) { [weak self] _ in self?.finishPreview() }
             } else {
                 let p = try AVAudioPlayer(contentsOf: url)
