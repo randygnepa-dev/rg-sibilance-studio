@@ -1,6 +1,6 @@
-release=0.2.15
-auto_analyze_on_load=true
-waveform_event_editing=true
-right_click_add_delete=true
-delete_key_remove=true
-retry=2
+release=0.2.16
+event_type_editing=true
+time_ruler_drag=true
+space_transport=true
+stop_modes=continue,return
+visual_polish=rg_dark
