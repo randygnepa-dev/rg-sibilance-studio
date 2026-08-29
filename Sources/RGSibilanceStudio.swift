@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.4.0"
+let RGVersion = "0.4.1"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -908,6 +908,17 @@ final class TimelineView: NSView {
             topPath.stroke(); bottomPath.stroke()
         }
 
+        let dbGrid = NSBezierPath()
+        for frac in [0.18,0.34,0.66,0.82] {
+            let gy = plotRect.minY + plotRect.height * CGFloat(frac)
+            dbGrid.move(to: NSPoint(x: plotRect.minX, y: gy)); dbGrid.line(to: NSPoint(x: plotRect.maxX, y: gy))
+        }
+        NSColor.white.withAlphaComponent(0.055).setStroke(); dbGrid.lineWidth = 0.5; dbGrid.stroke()
+        let dba:[NSAttributedString.Key:Any] = [.font:NSFont.monospacedDigitSystemFont(ofSize:7,weight:.regular),.foregroundColor:NSColor(hex:0x61798B)]
+        "-6".draw(at:NSPoint(x:plotRect.minX+4,y:plotRect.maxY-18),withAttributes:dba)
+        "-12".draw(at:NSPoint(x:plotRect.minX+4,y:plotRect.midY+22),withAttributes:dba)
+        "-18".draw(at:NSPoint(x:plotRect.minX+4,y:plotRect.midY-34),withAttributes:dba)
+
         let zero = NSBezierPath()
         zero.move(to: NSPoint(x: plotRect.minX, y: waveCenter))
         zero.line(to: NSPoint(x: plotRect.maxX, y: waveCenter))
@@ -1035,6 +1046,14 @@ final class TimelineView: NSView {
                 let gainText = String(format: "%.1f dB", e.gainDB)
                 let gainSize = gainText.size(withAttributes: gattrs)
                 gainText.draw(at: NSPoint(x: centerX - gainSize.width / 2, y: knobY - 4), withAttributes: gattrs)
+
+                let envY = plotRect.midY + CGFloat(min(0,max(-18,e.gainDB))/18.0) * 72.0
+                let env = NSBezierPath(); env.lineWidth = 1.6
+                env.move(to:NSPoint(x:startX,y:plotRect.midY)); env.line(to:NSPoint(x:min(endX,startX+14),y:envY)); env.line(to:NSPoint(x:max(startX,endX-14),y:envY)); env.line(to:NSPoint(x:endX,y:plotRect.midY))
+                NSColor.white.withAlphaComponent(0.86).setStroke(); env.stroke()
+                let clipHandle=NSBezierPath(roundedRect:NSRect(x:centerX-22,y:envY-8,width:44,height:16),xRadius:5,yRadius:5); NSColor(hex:0xE7EDF2).setFill(); clipHandle.fill()
+                let ca:[NSAttributedString.Key:Any]=[.font:NSFont.monospacedDigitSystemFont(ofSize:8,weight:.bold),.foregroundColor:NSColor(hex:0x17212A)]
+                let ct=String(format:"%.1f",e.gainDB); let cs=ct.size(withAttributes:ca); ct.draw(at:NSPoint(x:centerX-cs.width/2,y:envY-5),withAttributes:ca)
 
                 let inX = xForTime(min(e.end, e.start + e.fadeIn))
                 let outX = xForTime(max(e.start, e.end - e.fadeOut))
@@ -1415,26 +1434,67 @@ final class RGSpectralShapeView: NSView {
     var flatten: Double = 0 { didSet { needsDisplay = true } }
     var whistleHz: Double? { didSet { needsDisplay = true } }
     var whistleAmount: Double = 0 { didSet { needsDisplay = true } }
+    var whistleQ: Double = 7.0 { didSet { needsDisplay = true } }
+    var onWhistleChange: ((Double, Double, Double) -> Void)?
+    private var draggingWhistle = false
+
+    private func xForHz(_ hz: Double) -> CGFloat {
+        let f = log10(max(2000, min(20000, hz))/2000.0)
+        return bounds.minX + CGFloat(f) * bounds.width
+    }
+    private func hzForX(_ x: CGFloat) -> Double {
+        let f = Double(min(1,max(0,(x-bounds.minX)/max(1,bounds.width))))
+        return 2000.0 * pow(10.0, f)
+    }
+    private func whistleY() -> CGFloat {
+        bounds.midY - CGFloat(min(1,max(0,whistleAmount))) * bounds.height * 0.31
+    }
+    override func mouseDown(with event: NSEvent) {
+        let pt=convert(event.locationInWindow,from:nil)
+        let nx=xForHz(whistleHz ?? 8500)
+        if hypot(pt.x-nx,pt.y-whistleY()) < 22 || bounds.contains(pt) {
+            draggingWhistle=true; updateWhistle(pt,event:event)
+        }
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if draggingWhistle { updateWhistle(convert(event.locationInWindow,from:nil),event:event) }
+    }
+    override func mouseUp(with event: NSEvent) { draggingWhistle=false }
+    private func updateWhistle(_ pt:NSPoint,event:NSEvent) {
+        let hz=hzForX(pt.x)
+        let amount=Double(min(1,max(0,(bounds.midY-pt.y)/(bounds.height*0.31))))
+        var q=whistleQ
+        if event.modifierFlags.contains(.shift) {
+            q=min(18,max(1.5, 1.5 + Double((pt.x-bounds.minX)/max(1,bounds.width))*16.5))
+        }
+        whistleHz=hz; whistleAmount=amount; whistleQ=q
+        onWhistleChange?(hz,q,amount)
+    }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(hex: 0x09131C).setFill(); NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
-        let grid=NSBezierPath(); for i in 1..<4 { let y=bounds.minY+bounds.height*CGFloat(i)/4; grid.move(to:NSPoint(x:bounds.minX,y:y)); grid.line(to:NSPoint(x:bounds.maxX,y:y)) }
+        NSColor(hex:0x08121A).setFill(); NSBezierPath(roundedRect:bounds,xRadius:5,yRadius:5).fill()
+        let grid=NSBezierPath()
+        for i in 1..<4 { let y=bounds.minY+bounds.height*CGFloat(i)/4; grid.move(to:NSPoint(x:bounds.minX,y:y)); grid.line(to:NSPoint(x:bounds.maxX,y:y)) }
         for i in 1..<5 { let x=bounds.minX+bounds.width*CGFloat(i)/5; grid.move(to:NSPoint(x:x,y:bounds.minY)); grid.line(to:NSPoint(x:x,y:bounds.maxY)) }
-        NSColor.white.withAlphaComponent(0.055).setStroke(); grid.lineWidth=0.5; grid.stroke()
-        let path=NSBezierPath(); path.lineWidth=1.6
-        for i in 0...100 {
-            let f=Double(i)/100.0; let hz=2000.0*pow(10.0,f); let x=bounds.minX+CGFloat(f)*bounds.width
-            var db=tilt*(f-0.35)*7.0
-            db *= (1.0-flatten*0.35)
-            if let wh=whistleHz, whistleAmount>0 { let oct=log2(max(100.0,hz)/max(100.0,wh)); db -= whistleAmount*8.0*exp(-oct*oct*42.0) }
-            let y=bounds.midY+CGFloat(db/12.0)*bounds.height*0.78
+        NSColor.white.withAlphaComponent(0.06).setStroke(); grid.lineWidth=0.5; grid.stroke()
+        let zero=NSBezierPath(); zero.move(to:NSPoint(x:bounds.minX,y:bounds.midY)); zero.line(to:NSPoint(x:bounds.maxX,y:bounds.midY)); NSColor.white.withAlphaComponent(0.12).setStroke(); zero.stroke()
+        let path=NSBezierPath(); path.lineWidth=1.8
+        for i in 0...180 {
+            let f=Double(i)/180.0; let hz=2000.0*pow(10.0,f); let x=bounds.minX+CGFloat(f)*bounds.width
+            var db=tilt*(f-0.35)*7.0; db *= (1.0-flatten*0.35)
+            if let wh=whistleHz, whistleAmount>0 { let oct=log2(max(100,hz)/max(100,wh)); let width=max(5.0,whistleQ); db -= whistleAmount*10.0*exp(-oct*oct*width*5.2) }
+            let y=bounds.midY+CGFloat(db/12.0)*bounds.height*0.72
             if i==0 { path.move(to:NSPoint(x:x,y:y)) } else { path.line(to:NSPoint(x:x,y:y)) }
         }
-        NSColor(hex:0x62B6FF).setStroke(); path.stroke()
+        NSColor(hex:0x55AFFF).setStroke(); path.stroke()
+        if let hz=whistleHz {
+            let x=xForHz(hz), y=whistleY(); let node=NSBezierPath(ovalIn:NSRect(x:x-7,y:y-7,width:14,height:14)); NSColor(hex:0xB86CFF).setFill(); node.fill(); NSColor.white.setStroke(); node.lineWidth=1; node.stroke()
+            let a:[NSAttributedString.Key:Any]=[.font:NSFont.monospacedDigitSystemFont(ofSize:8,weight:.semibold),.foregroundColor:NSColor(hex:0xD7C7FF)]
+            String(format:"%.1fk  Q%.1f",hz/1000.0,whistleQ).draw(at:NSPoint(x:min(bounds.maxX-76,max(bounds.minX+4,x-34)),y:max(4,y-22)),withAttributes:a)
+        }
         let attrs:[NSAttributedString.Key:Any]=[.font:NSFont.monospacedDigitSystemFont(ofSize:7,weight:.regular),.foregroundColor:NSColor(hex:0x61798B)]
         ["2k","4k","8k","12k","20k"].enumerated().forEach { i,t in t.draw(at:NSPoint(x:bounds.minX+CGFloat(i)*bounds.width/4-5,y:3),withAttributes:attrs) }
     }
 }
-
 final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
     private var window: NSWindow!
     private var status: NSTextField!
@@ -1530,9 +1590,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     }
 
     private func buildUI() {
-        // CLEAN PRO 0.4.0: fixed geometry first. No resize until the visual shell is stable.
-        let w: CGFloat = 1460
-        let h: CGFloat = 880
+        // CLEAN PRO 0.4.1 PRO TOOLS: fixed geometry first. No resize until the visual shell is stable.
+        let w: CGFloat = 1540
+        let h: CGFloat = 920
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: w, height: h)
         window = NSWindow(
             contentRect: NSRect(x: screen.midX - w/2, y: screen.midY - h/2, width: w, height: h),
@@ -1575,19 +1635,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let margin: CGFloat = 18
         let inspectorW: CGFloat = 278
         let gap: CGFloat = 10
-        let editorX=margin, editorY:CGFloat=292, editorW=w-margin*2-inspectorW-gap, editorH:CGFloat=498
+        let editorX=margin, editorY:CGFloat=310, editorW=w-margin*2-inspectorW-gap, editorH:CGFloat=522
         editorPanel=makePanel(NSRect(x:editorX,y:editorY,width:editorW,height:editorH)); editorPanel.fillColor=NSColor(hex:0x0A151E); root.addSubview(editorPanel)
 
-        viewTabsControl=NSSegmentedControl(labels:["WAVEFORM","SPECTROGRAM"],trackingMode:.selectOne,target:self,action:#selector(viewModeChanged(_:)))
-        viewTabsControl.selectedSegment=0; viewTabsControl.frame=NSRect(x:14,y:editorH-34,width:190,height:24); viewTabsControl.controlSize = .small; editorPanel.addSubview(viewTabsControl)
-        currentTimeLabel=label("00:00.000",size:13,weight:.bold,color:NSColor(hex:0x4AABFF)); currentTimeLabel.font=NSFont.monospacedDigitSystemFont(ofSize:13,weight:.bold); currentTimeLabel.frame=NSRect(x:216,y:editorH-33,width:100,height:22); editorPanel.addSubview(currentTimeLabel)
-        pinnedEventLabel=label("NO EVENT SELECTED",size:9,weight:.semibold,color:NSColor(hex:0x7F95A4)); pinnedEventLabel.frame=NSRect(x:330,y:editorH-32,width:250,height:20); editorPanel.addSubview(pinnedEventLabel)
-        let pPlay=button("▶",action:#selector(playSelected)); pPlay.frame=NSRect(x:590,y:editorH-35,width:34,height:26); editorPanel.addSubview(pPlay)
-        let pGood=button("GOOD",action:#selector(markGood)); pGood.frame=NSRect(x:630,y:editorH-35,width:56,height:26); editorPanel.addSubview(pGood)
-        let pBad=button("BAD",action:#selector(markBad)); pBad.frame=NSRect(x:692,y:editorH-35,width:50,height:26); editorPanel.addSubview(pBad)
-        let pNote=button("Note",action:#selector(addAnnotation)); pNote.frame=NSRect(x:748,y:editorH-35,width:58,height:26); editorPanel.addSubview(pNote)
-        pinnedGainSlider=NSSlider(value:0,minValue:-18,maxValue:0,target:self,action:#selector(pinnedGainChanged(_:))); pinnedGainSlider.frame=NSRect(x:818,y:editorH-32,width:120,height:20); pinnedGainSlider.isEnabled=false; editorPanel.addSubview(pinnedGainSlider)
-        pinnedNoteLabel=label("",size:8,color:NSColor(hex:0x647988)); pinnedNoteLabel.frame=NSRect(x:948,y:editorH-31,width:editorW-962,height:18); pinnedNoteLabel.lineBreakMode = .byTruncatingTail; editorPanel.addSubview(pinnedNoteLabel)
+        viewTabsControl=NSSegmentedControl(labels:["WAVEFORM"],trackingMode:.selectOne,target:self,action:#selector(viewModeChanged(_:)))
+        viewTabsControl.selectedSegment=0; viewTabsControl.frame=NSRect(x:14,y:editorH-34,width:104,height:24); viewTabsControl.controlSize = .small; editorPanel.addSubview(viewTabsControl)
+        currentTimeLabel=label("00:00.000",size:13,weight:.bold,color:NSColor(hex:0x4AABFF)); currentTimeLabel.font=NSFont.monospacedDigitSystemFont(ofSize:13,weight:.bold); currentTimeLabel.frame=NSRect(x:132,y:editorH-33,width:100,height:22); editorPanel.addSubview(currentTimeLabel)
+        pinnedEventLabel=label("NO EVENT SELECTED",size:9,weight:.semibold,color:NSColor(hex:0x7F95A4)); pinnedEventLabel.frame=NSRect(x:246,y:editorH-32,width:250,height:20); editorPanel.addSubview(pinnedEventLabel)
+        let pPlay=button("▶",action:#selector(playSelected)); pPlay.frame=NSRect(x:510,y:editorH-35,width:34,height:26); editorPanel.addSubview(pPlay)
+        let pGood=button("GOOD",action:#selector(markGood)); pGood.frame=NSRect(x:550,y:editorH-35,width:56,height:26); editorPanel.addSubview(pGood)
+        let pBad=button("BAD",action:#selector(markBad)); pBad.frame=NSRect(x:612,y:editorH-35,width:50,height:26); editorPanel.addSubview(pBad)
+        let pNote=button("Note",action:#selector(addAnnotation)); pNote.frame=NSRect(x:668,y:editorH-35,width:58,height:26); editorPanel.addSubview(pNote)
+        pinnedGainSlider=NSSlider(value:0,minValue:-18,maxValue:0,target:self,action:#selector(pinnedGainChanged(_:))); pinnedGainSlider.frame=NSRect(x:738,y:editorH-32,width:120,height:20); pinnedGainSlider.isEnabled=false; editorPanel.addSubview(pinnedGainSlider)
+        pinnedNoteLabel=label("",size:8,color:NSColor(hex:0x647988)); pinnedNoteLabel.frame=NSRect(x:868,y:editorH-31,width:editorW-882,height:18); pinnedNoteLabel.lineBreakMode = .byTruncatingTail; editorPanel.addSubview(pinnedNoteLabel)
 
         timeline=TimelineView(frame:NSRect(x:10,y:54,width:editorW-20,height:editorH-98))
         timeline.onAudioDrop={ [weak self] u in self?.loadAudio(u) }
@@ -1618,8 +1678,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         annotationStack=NSStackView(frame:NSRect(x:0,y:0,width:inspectorW-38,height:scroll.bounds.height)); annotationStack.orientation = .vertical; annotationStack.alignment = .leading; annotationStack.spacing=5; scroll.documentView=annotationStack; annotationsPanel.addSubview(scroll)
 
         // MARK: Bottom modules — exact fixed grid, no overlap possible.
-        let bottomY:CGFloat=70, bottomH:CGFloat=208
-        let detectW:CGFloat=202, repairW:CGFloat=540, refW:CGFloat=224, processW:CGFloat=210, previewW:CGFloat=226
+        let bottomY:CGFloat=70, bottomH:CGFloat=226
+        let detectW:CGFloat=190, repairW:CGFloat=548, refW:CGFloat=220, processW:CGFloat=200, previewW:CGFloat=226
         let x1=margin, x2=x1+detectW+gap, x3=x2+repairW+gap, x4=x3+refW+gap, x5=x4+processW+gap
         let detect=makePanel(NSRect(x:x1,y:bottomY,width:detectW,height:bottomH)); root.addSubview(detect)
         let repair=makePanel(NSRect(x:x2,y:bottomY,width:repairW,height:bottomH)); root.addSubview(repair)
@@ -1652,6 +1712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let autoWh=button("AUTO",action:#selector(autoFindWhistle)); autoWh.frame=NSRect(x:302,y:bottomH-158,width:54,height:25); repair.addSubview(autoWh)
         resonanceFreqLabel=label("",size:8,color:NSColor(hex:0x6E8392)); resonanceFreqLabel.frame=NSRect(x:110,y:bottomH-173,width:180,height:15); repair.addSubview(resonanceFreqLabel)
         spectralShapeView=RGSpectralShapeView(frame:NSRect(x:370,y:44,width:154,height:126)); repair.addSubview(spectralShapeView)
+        spectralShapeView.onWhistleChange = { [weak self] hz, q, amount in self?.spectralWhistleEdited(hz: hz, q: q, amount: amount) }
         let graphTitle=label("SPECTRAL SHAPE",size:8,weight:.semibold,color:NSColor(hex:0x6F8798)); graphTitle.frame=NSRect(x:370,y:174,width:130,height:16); repair.addSubview(graphTitle)
         let type=label("Type",size:8,color:NSColor(hex:0x758A99)); type.frame=NSRect(x:14,y:14,width:32,height:16); repair.addSubview(type)
         kindPopup=NSPopUpButton(frame:NSRect(x:48,y:8,width:70,height:26),pullsDown:false); kindPopup.addItems(withTitles:["S","Š","Z","C","Č","T","Ť","D","K","P","B","F","CH","OTHER"]); kindPopup.target=self; kindPopup.action=#selector(kindChanged); kindPopup.isEnabled=false; repair.addSubview(kindPopup)
@@ -1703,20 +1764,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         guard annotationStack != nil else { return }
         for v in annotationStack.arrangedSubviews { annotationStack.removeArrangedSubview(v); v.removeFromSuperview() }
         annotationCountLabel?.stringValue = "\(events.count) edits"
+        annotationStack.frame.size.height = CGFloat(max(1, events.count)) * 30.0
         for (i,e) in events.enumerated() {
-            let note = (e.note?.isEmpty == false) ? e.note! : "No annotation"
-            let title = String(format: "%@   [%@]   %.1f dB\n%@", formatTime(e.peakTime), e.kind, e.gainDB, note)
-            let b = NSButton(title: title, target: self, action: #selector(selectAnnotationEvent(_:)))
+            let state = e.userLabel.isEmpty ? "—" : e.userLabel.capitalized
+            let title = String(format: "%02d   %-2@   %@    %5.1f dB   %@", i+1, e.kind, formatTime(e.peakTime), e.gainDB, state)
+            let b = RGButton(title: title, target: self, action: #selector(selectAnnotationEvent(_:)))
+            b.role = i == timeline.selectedIndex ? .primary : .ghost
             b.tag = i
-            b.bezelStyle = .rounded
             b.alignment = .left
-            b.font = NSFont.systemFont(ofSize: 10, weight: i == timeline.selectedIndex ? .semibold : .regular)
-            b.contentTintColor = i == timeline.selectedIndex ? NSColor(hex: 0x4AA8FF) : NSColor(hex: 0xD1D8DE)
-            b.widthAnchor.constraint(equalToConstant: 236).isActive = true
-            b.heightAnchor.constraint(equalToConstant: 42).isActive = true
+            b.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: i == timeline.selectedIndex ? .semibold : .regular)
+            b.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 26).isActive = true
             annotationStack.addArrangedSubview(b)
         }
         annotationStack.needsLayout = true
+        annotationStack.layoutSubtreeIfNeeded()
     }
 
     @objc private func selectAnnotationEvent(_ sender: NSButton) {
@@ -1732,8 +1794,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     }
 
     @objc private func viewModeChanged(_ sender: NSSegmentedControl) {
-        timeline.displayMode = sender.selectedSegment
-        status.stringValue = sender.selectedSegment == 1 ? "SPECTROGRAM VIEW" : "WAVEFORM VIEW"
+        timeline.displayMode = 0
+        sender.selectedSegment = 0
+        status.stringValue = "WAVEFORM VIEW"
     }
 
     @objc private func toggleInspector() {
@@ -1838,6 +1901,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         events[i].referenceInfluence = 0.72
         timeline.events=events; saveCurrentSession(); previewPlayer?.stop(); transportPlayer?.stop(); selectEvent(i)
         status.stringValue = "MATCHED TO SAVED [\(events[i].kind)] REFERENCE — spectral shape + level preserved"
+    }
+
+
+    private func spectralWhistleEdited(hz: Double, q: Double, amount: Double) {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        events[i].resonanceHz = hz
+        events[i].resonanceQ = q
+        events[i].resonanceAmount = amount
+        events[i].repairMethod = amount > 0.01 ? "WHISTLE EQ" : events[i].repairMethod
+        resonanceSlider?.doubleValue = amount
+        resonanceValueLabel?.stringValue = "\(Int(amount * 100))%"
+        resonanceFreqLabel?.stringValue = String(format: "%.1f kHz  Q %.1f", hz/1000.0, q)
+        timeline.events = events
+        previewPlayer?.stop(); transportPlayer?.stop()
+        saveCurrentSession()
+        status.stringValue = String(format: "DE-WHISTLE EQ %.1f kHz • Q %.1f • %d%%", hz/1000.0, q, Int(amount*100))
     }
 
     @objc private func resonanceChanged(_ sender: NSSlider) {
@@ -2171,6 +2250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         spectralShapeView?.flatten = e.spectralFlatten ?? 0
         spectralShapeView?.whistleHz = e.resonanceHz
         spectralShapeView?.whistleAmount = e.resonanceAmount ?? 0
+        spectralShapeView?.whistleQ = e.resonanceQ ?? 7.0
         eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, "METHOD \(e.repairMethod ?? "MANUAL") • \(RGRepairAdvisor.qualityText(for: e))")
         refreshAnnotationSidebar()
     }
