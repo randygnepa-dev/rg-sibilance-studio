@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.32"
+let RGVersion = "0.2.33"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -1219,8 +1219,15 @@ final class UpdateManager {
 
     private func applyPrebuilt(_ version: String) {
         let stamp = String(Int(Date().timeIntervalSince1970))
-        guard let zipURL = URL(string: "\(RGRepoRaw)/dist/RG-Sibilance-Studio-\(version).zip?t=\(stamp)"),
-              let shaURL = URL(string: "\(RGRepoRaw)/dist/SHA256?t=\(stamp)") else { busy = false; return }
+        guard let shaURL = URL(string: "\(RGRepoRaw)/dist/SHA256?t=\(stamp)") else { busy = false; return }
+        guard let expectedData = try? Data(contentsOf: shaURL),
+              let expectedHash = String(data: expectedData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !expectedHash.isEmpty,
+              let zipURL = URL(string: "\(RGRepoRaw)/dist/RG-Sibilance-Studio-\(version).zip?sha=\(expectedHash)") else {
+            busy = false
+            DispatchQueue.main.async { self.onStatus?("UPDATE FAILED — manifest unavailable") }
+            return
+        }
 
         URLSession.shared.downloadTask(with: zipURL) { [weak self] tempURL, _, error in
             guard let self = self, let tempURL = tempURL, error == nil else {
@@ -1229,10 +1236,9 @@ final class UpdateManager {
                 return
             }
             do {
-                let expectedData = try Data(contentsOf: shaURL)
-                let expected = (String(data: expectedData, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let expected = expectedHash
                 let actual = try self.sha256(tempURL).lowercased()
-                guard !expected.isEmpty, expected == actual else {
+                guard expected == actual else {
                     throw NSError(domain: "RGUpdate", code: 21, userInfo: [NSLocalizedDescriptionKey: "Downloaded app failed SHA256 verification"])
                 }
 
@@ -1446,39 +1452,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         root.layer?.backgroundColor = NSColor(hex: 0x0A1016).cgColor
         window.contentView = root
 
-        let inspectorW: CGFloat = 326
-        let inspectorGap: CGFloat = 12
+        let inspectorW: CGFloat = 340
+        let inspectorGap: CGFloat = 10
         let mainW = w - 84 - inspectorW - inspectorGap
 
-        let title = label("RG Sibilance Studio", size: 28, weight: .bold, color: .white)
-        title.frame = NSRect(x: 42, y: h - 75, width: 460, height: 38)
+        let title = label("RG Sibilance Studio", size: 20, weight: .bold, color: .white)
+        title.frame = NSRect(x: 56, y: h - 64, width: 280, height: 28)
         root.addSubview(title)
         let subtitle = label("Sibilance detection & repair", size: 12, color: NSColor(hex: 0x8D9AA6))
-        subtitle.frame = NSRect(x: 44, y: h - 101, width: 540, height: 20)
+        subtitle.frame = NSRect(x: 56, y: h - 86, width: 300, height: 18)
         root.addSubview(subtitle)
 
+        let rgBadge = NSTextField(labelWithString: "RG")
+        rgBadge.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+        rgBadge.alignment = .center
+        rgBadge.textColor = .white
+        rgBadge.frame = NSRect(x: 16, y: h - 70, width: 32, height: 32)
+        rgBadge.wantsLayer = true
+        rgBadge.layer?.cornerRadius = 16
+        rgBadge.layer?.borderWidth = 1.2
+        rgBadge.layer?.borderColor = NSColor(hex: 0x6E7E8A).cgColor
+        rgBadge.layer?.backgroundColor = NSColor(hex: 0x101820).cgColor
+        root.addSubview(rgBadge)
+
         analyzeButton = button("⌁  Analyze", action: #selector(analyzeAudio))
-        analyzeButton.frame = NSRect(x: 42 + mainW - 326, y: h - 84, width: 150, height: 40)
+        analyzeButton.frame = NSRect(x: 42 + mainW - 152, y: h - 72, width: 140, height: 32)
         analyzeButton.bezelColor = NSColor(hex: 0x1578E8)
         root.addSubview(analyzeButton)
         let open = button("▱  Open File", action: #selector(openWav))
-        open.frame = NSRect(x: 42 + mainW - 164, y: h - 84, width: 150, height: 40)
+        open.frame = NSRect(x: 42 + mainW - 302, y: h - 72, width: 140, height: 32)
         root.addSubview(open)
 
-        let editorY: CGFloat = 286
-        let editorH = h - editorY - 124
+        let editorY: CGFloat = 274
+        let editorH = h - editorY - 104
         let editor = makePanel(NSRect(x: 42, y: editorY, width: mainW, height: editorH))
         editor.fillColor = NSColor(hex: 0x0C141B)
         root.addSubview(editor)
 
-        let annotationsPanel = makePanel(NSRect(x: 42 + mainW + inspectorGap, y: 58, width: inspectorW, height: h - 182))
+        let viewTabs = NSSegmentedControl(labels: ["WAVEFORM", "SPECTROGRAM"], trackingMode: .selectOne, target: nil, action: nil)
+        viewTabs.selectedSegment = 0
+        viewTabs.frame = NSRect(x: 14, y: editorH - 34, width: 214, height: 24)
+        editor.addSubview(viewTabs)
+
+        let annotationsPanel = makePanel(NSRect(x: 42 + mainW + inspectorGap, y: 44, width: inspectorW, height: h - 144))
         annotationsPanel.fillColor = NSColor(hex: 0x0D161F)
         root.addSubview(annotationsPanel)
         let annTitle = label("EDITS & ANNOTATIONS", size: 11, weight: .bold, color: .white)
-        annTitle.frame = NSRect(x: 14, y: annotationsPanel.bounds.height - 34, width: 190, height: 20)
+        annTitle.frame = NSRect(x: 16, y: annotationsPanel.bounds.height - 34, width: 210, height: 20)
         annotationsPanel.addSubview(annTitle)
         let annAdd = button("＋ Add", action: #selector(addAnnotation))
-        annAdd.frame = NSRect(x: inspectorW - 86, y: annotationsPanel.bounds.height - 40, width: 72, height: 28)
+        annAdd.frame = NSRect(x: inspectorW - 88, y: annotationsPanel.bounds.height - 40, width: 74, height: 28)
         annotationsPanel.addSubview(annAdd)
         annotationCountLabel = label("0 edits", size: 10, color: NSColor(hex: 0x71818D))
         annotationCountLabel.frame = NSRect(x: 14, y: 12, width: 100, height: 18)
@@ -1496,32 +1519,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
         currentTimeLabel = label("00:00.000", size: 16, weight: .bold, color: NSColor(hex: 0x3198FF))
         currentTimeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 16, weight: .bold)
-        currentTimeLabel.frame = NSRect(x: 16, y: editorH - 37, width: 150, height: 24)
+        currentTimeLabel.frame = NSRect(x: 16, y: editorH - 66, width: 150, height: 24)
         editor.addSubview(currentTimeLabel)
 
         let timeHint = label("locator / selected event", size: 9, color: NSColor(hex: 0x637482))
-        timeHint.frame = NSRect(x: 166, y: editorH - 34, width: 150, height: 18)
+        timeHint.frame = NSRect(x: 166, y: editorH - 63, width: 150, height: 18)
         editor.addSubview(timeHint)
 
         // Pinned event inspector: stays available while the viewport/time position changes.
-        let pinned = makePanel(NSRect(x: 330, y: editorH - 48, width: editor.bounds.width - 396, height: 38))
+        let pinned = makePanel(NSRect(x: 320, y: editorH - 72, width: editor.bounds.width - 334, height: 34))
         pinned.fillColor = NSColor(hex: 0x0F1D28)
         pinnedEventLabel = label("NO EVENT SELECTED", size: 10, weight: .bold, color: NSColor(hex: 0x8FA0AD))
-        pinnedEventLabel.frame = NSRect(x: 10, y: 10, width: 205, height: 18)
+        pinnedEventLabel.frame = NSRect(x: 10, y: 8, width: 190, height: 18)
         pinned.addSubview(pinnedEventLabel)
-        let pPlay = button("▶", action: #selector(playSelected)); pPlay.frame = NSRect(x: 218, y: 5, width: 34, height: 28); pinned.addSubview(pPlay)
-        let pGood = button("GOOD", action: #selector(markGood)); pGood.frame = NSRect(x: 256, y: 5, width: 55, height: 28); pinned.addSubview(pGood)
-        let pBad = button("BAD", action: #selector(markBad)); pBad.frame = NSRect(x: 315, y: 5, width: 50, height: 28); pinned.addSubview(pBad)
-        let pNote = button("✎ Note", action: #selector(addAnnotation)); pNote.frame = NSRect(x: 369, y: 5, width: 72, height: 28); pinned.addSubview(pNote)
+        let pPlay = button("▶", action: #selector(playSelected)); pPlay.frame = NSRect(x: 198, y: 3, width: 32, height: 28); pinned.addSubview(pPlay)
+        let pGood = button("GOOD", action: #selector(markGood)); pGood.frame = NSRect(x: 234, y: 3, width: 58, height: 28); pinned.addSubview(pGood)
+        let pBad = button("BAD", action: #selector(markBad)); pBad.frame = NSRect(x: 296, y: 3, width: 52, height: 28); pinned.addSubview(pBad)
+        let pNote = button("✎ Note", action: #selector(addAnnotation)); pNote.frame = NSRect(x: 352, y: 3, width: 74, height: 28); pinned.addSubview(pNote)
         pinnedGainSlider = NSSlider(value: 0, minValue: -18, maxValue: 0, target: self, action: #selector(pinnedGainChanged(_:)))
-        pinnedGainSlider.frame = NSRect(x: 448, y: 8, width: 128, height: 22); pinnedGainSlider.isEnabled = false; pinned.addSubview(pinnedGainSlider)
+        pinnedGainSlider.frame = NSRect(x: 432, y: 6, width: 122, height: 22); pinnedGainSlider.isEnabled = false; pinned.addSubview(pinnedGainSlider)
         pinnedNoteLabel = label("", size: 9, color: NSColor(hex: 0x8FA0AD))
-        pinnedNoteLabel.frame = NSRect(x: 582, y: 10, width: max(80, pinned.bounds.width - 592), height: 18)
+        pinnedNoteLabel.frame = NSRect(x: 560, y: 8, width: max(70, pinned.bounds.width - 570), height: 18)
         pinnedNoteLabel.lineBreakMode = .byTruncatingTail
         pinned.addSubview(pinnedNoteLabel)
         editor.addSubview(pinned)
 
-        timeline = TimelineView(frame: NSRect(x: 12, y: 48, width: editor.bounds.width - 66, height: editorH - 124))
+        timeline = TimelineView(frame: NSRect(x: 12, y: 74, width: editor.bounds.width - 24, height: editorH - 154))
         timeline.onAudioDrop = { [weak self] url in self?.loadAudio(url) }
         timeline.onSelect = { [weak self] i in self?.selectEvent(i) }
         timeline.onScrub = { [weak self] t, active in
@@ -1537,35 +1560,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onCreateEventRegion = { [weak self] start, end in self?.createEventFromSelection(start: start, end: end) }
         editor.addSubview(timeline)
 
-        let zoomIn = button("+", action: #selector(zoomInTimeline)); zoomIn.frame = NSRect(x: editor.bounds.width - 45, y: editorH - 78, width: 32, height: 30); editor.addSubview(zoomIn)
-        let zoomOut = button("−", action: #selector(zoomOutTimeline)); zoomOut.frame = NSRect(x: editor.bounds.width - 45, y: editorH - 113, width: 32, height: 30); editor.addSubview(zoomOut)
-        let fit = button("Fit", action: #selector(fitTimeline)); fit.frame = NSRect(x: editor.bounds.width - 48, y: editorH - 149, width: 38, height: 30); editor.addSubview(fit)
+        let zoomIn = button("＋", action: #selector(zoomInTimeline)); zoomIn.frame = NSRect(x: 14, y: 42, width: 34, height: 26); editor.addSubview(zoomIn)
+        let zoomOut = button("−", action: #selector(zoomOutTimeline)); zoomOut.frame = NSRect(x: 52, y: 42, width: 34, height: 26); editor.addSubview(zoomOut)
+        let fit = button("Fit", action: #selector(fitTimeline)); fit.frame = NSRect(x: 90, y: 42, width: 44, height: 26); editor.addSubview(fit)
+        let trPrev = button("◀", action: #selector(previousEvent)); trPrev.frame = NSRect(x: editor.bounds.midX - 74, y: 40, width: 34, height: 28); editor.addSubview(trPrev)
+        let trPlay = button("▶", action: #selector(playSelected)); trPlay.frame = NSRect(x: editor.bounds.midX - 34, y: 38, width: 46, height: 32); trPlay.bezelColor = NSColor(hex: 0x263746); editor.addSubview(trPlay)
+        let trNext = button("▶|", action: #selector(nextEvent)); trNext.frame = NSRect(x: editor.bounds.midX + 18, y: 40, width: 40, height: 28); editor.addSubview(trNext)
 
         detectedFooter = label("Detected: 0 events", size: 11, weight: .semibold, color: NSColor(hex: 0x329CFF))
-        detectedFooter.frame = NSRect(x: 16, y: 16, width: 180, height: 20)
+        detectedFooter.frame = NSRect(x: 16, y: 13, width: 180, height: 20)
         editor.addSubview(detectedFooter)
         let legend = label("●  S / Š      ●  T / Ť      ●  C / Č      ●  Z / Ž", size: 10, color: NSColor(hex: 0x9FAAB4))
-        legend.frame = NSRect(x: 390, y: 16, width: 390, height: 20)
+        legend.frame = NSRect(x: 160, y: 13, width: 330, height: 20)
         editor.addSubview(legend)
         let sensText = label("Sensitivity", size: 10, color: NSColor(hex: 0x9FAAB4))
-        sensText.frame = NSRect(x: editor.bounds.width - 278, y: 16, width: 78, height: 20)
+        sensText.frame = NSRect(x: editor.bounds.width - 250, y: 13, width: 78, height: 20)
         editor.addSubview(sensText)
         let editorSensitivity = NSSlider(value: 0.72, minValue: 0, maxValue: 1, target: self, action: #selector(editorSensitivityChanged(_:)))
-        editorSensitivity.frame = NSRect(x: editor.bounds.width - 196, y: 14, width: 132, height: 22)
+        editorSensitivity.frame = NSRect(x: editor.bounds.width - 170, y: 11, width: 110, height: 22)
         editorSensitivity.identifier = NSUserInterfaceItemIdentifier("editorSensitivity")
         editor.addSubview(editorSensitivity)
         let sensValue = label("72%", size: 10, weight: .semibold, color: NSColor(hex: 0xBFC8D0))
-        sensValue.frame = NSRect(x: editor.bounds.width - 58, y: 16, width: 45, height: 20)
+        sensValue.frame = NSRect(x: editor.bounds.width - 56, y: 13, width: 42, height: 20)
         sensValue.identifier = NSUserInterfaceItemIdentifier("editorSensitivityValue")
         editor.addSubview(sensValue)
 
-        let panelY: CGFloat = 58
-        let panelH = max(CGFloat(216), editorY - 72)
+        let panelY: CGFloat = 44
+        let panelH = max(CGFloat(214), editorY - 56)
         let gap: CGFloat = 10
-        let leftW: CGFloat = mainW * 0.22
-        let centerW: CGFloat = mainW * 0.38
-        let advancedW: CGFloat = mainW * 0.18
-        let rightW = mainW - leftW - centerW - advancedW - gap * 3
+        let leftW: CGFloat = 210
+        let centerW: CGFloat = 390
+        let advancedW: CGFloat = 180
+        let rightW = max(CGFloat(250), mainW - leftW - centerW - advancedW - gap * 3)
         let p1 = makePanel(NSRect(x: 42, y: panelY, width: leftW, height: panelH))
         let p2 = makePanel(NSRect(x: 42 + leftW + gap, y: panelY, width: centerW, height: panelH))
         let pAdv = makePanel(NSRect(x: 42 + leftW + centerW + gap * 2, y: panelY, width: advancedW, height: panelH))
@@ -1594,26 +1620,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         p1.addSubview(sensitivitySlider)
 
         addTitle("REPAIR", to: p2, y: panelH - 30)
-        let good = button("GOOD", action: #selector(markGood)); good.frame = NSRect(x: 16, y: panelH - 73, width: 74, height: 28)
-        let bad = button("BAD", action: #selector(markBad)); bad.frame = NSRect(x: 96, y: panelH - 73, width: 70, height: 28)
-        let target = button("TARGET", action: #selector(markTarget)); target.frame = NSRect(x: 172, y: panelH - 73, width: 82, height: 28)
-        let normal = button("NORMAL", action: #selector(markNormal)); normal.frame = NSRect(x: 260, y: panelH - 73, width: 86, height: 28)
+        let good = button("GOOD", action: #selector(markGood)); good.frame = NSRect(x: 16, y: panelH - 70, width: 62, height: 26)
+        let bad = button("BAD", action: #selector(markBad)); bad.frame = NSRect(x: 82, y: panelH - 70, width: 58, height: 26)
+        let target = button("TARGET", action: #selector(markTarget)); target.frame = NSRect(x: 144, y: panelH - 70, width: 70, height: 26)
+        let normal = button("NORMAL", action: #selector(markNormal)); normal.frame = NSRect(x: 218, y: panelH - 70, width: 72, height: 26)
         p2.addSubview(good); p2.addSubview(bad); p2.addSubview(target); p2.addSubview(normal)
 
-        let typeLabel = label("Type", size: 10); typeLabel.frame = NSRect(x: centerW - 142, y: panelH - 68, width: 40, height: 18); p2.addSubview(typeLabel)
-        kindPopup = NSPopUpButton(frame: NSRect(x: centerW - 104, y: panelH - 74, width: 88, height: 26), pullsDown: false)
+        let typeLabel = label("Type", size: 10); typeLabel.frame = NSRect(x: centerW - 92, y: panelH - 66, width: 34, height: 18); p2.addSubview(typeLabel)
+        kindPopup = NSPopUpButton(frame: NSRect(x: centerW - 60, y: panelH - 72, width: 48, height: 26), pullsDown: false)
         kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "Č", "T", "Ť", "D", "K", "P", "B", "F", "CH", "OTHER"])
         kindPopup.target = self; kindPopup.action = #selector(kindChanged); kindPopup.isEnabled = false; p2.addSubview(kindPopup)
 
         let rs = label("SIBILANCE", size: 11, weight: .bold, color: .white); rs.frame = NSRect(x: 16, y: panelH - 112, width: 110, height: 18); p2.addSubview(rs)
         repairSlider = NSSlider(value: 0.66, minValue: 0, maxValue: 1, target: self, action: #selector(repairStrengthChanged(_:)))
-        repairSlider.frame = NSRect(x: 126, y: panelH - 116, width: centerW - 210, height: 22); p2.addSubview(repairSlider)
+        repairSlider.frame = NSRect(x: 96, y: panelH - 116, width: centerW - 150, height: 22); p2.addSubview(repairSlider)
         let less = label("LESS S", size: 9, color: NSColor(hex: 0x738390)); less.frame = NSRect(x: 16, y: panelH - 138, width: 55, height: 16); p2.addSubview(less)
         let more = label("MORE S", size: 9, color: NSColor(hex: 0x738390)); more.frame = NSRect(x: centerW - 76, y: panelH - 138, width: 60, height: 16); p2.addSubview(more)
 
-        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 70, width: 108, height: 34); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
-        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 130, y: 70, width: 140, height: 34); p2.addSubview(morph)
-        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 276, y: 70, width: 140, height: 34); p2.addSubview(blend)
+        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 70, width: 102, height: 32); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
+        let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 124, y: 70, width: 120, height: 32); p2.addSubview(morph)
+        let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 250, y: 70, width: 120, height: 32); p2.addSubview(blend)
         applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 18, width: 116, height: 30); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
 
         let trimLabel = label("TYPE TRIM", size: 10); trimLabel.frame = NSRect(x: 16, y: panelH - 91, width: 78, height: 18); pAdv.addSubview(trimLabel)
@@ -1626,22 +1652,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutValue = label("OUT 12", size: 9); fadeOutValue.frame = NSRect(x: advancedW - 48, y: 39, width: 42, height: 18); pAdv.addSubview(fadeOutValue)
 
         addTitle("PREVIEW", to: p3, y: panelH - 30)
-        playButton = button("▶  PLAY EVENT", action: #selector(playSelected)); playButton.frame = NSRect(x: 16, y: panelH - 76, width: 132, height: 36); p3.addSubview(playButton)
-        auditionMode = NSSegmentedControl(labels: ["ORIG", "REPAIR", "DELTA", "S ONLY"], trackingMode: .selectOne, target: self, action: #selector(auditionModeChanged)); auditionMode.selectedSegment = 1; auditionMode.frame = NSRect(x: 156, y: panelH - 77, width: rightW - 260, height: 30); p3.addSubview(auditionMode)
-        loopButton = button("↻ Loop", action: #selector(toggleLoop)); loopButton.frame = NSRect(x: rightW - 96, y: panelH - 76, width: 80, height: 36); p3.addSubview(loopButton)
+        playButton = button("▶", action: #selector(playSelected)); playButton.frame = NSRect(x: 16, y: panelH - 72, width: 42, height: 30); p3.addSubview(playButton)
+        auditionMode = NSSegmentedControl(labels: ["ORIG", "REPAIR", "DELTA", "S"], trackingMode: .selectOne, target: self, action: #selector(auditionModeChanged)); auditionMode.selectedSegment = 1; auditionMode.frame = NSRect(x: 62, y: panelH - 72, width: max(150, rightW - 78), height: 28); p3.addSubview(auditionMode)
+        loopButton = button("↻", action: #selector(toggleLoop)); loopButton.frame = NSRect(x: 16, y: panelH - 108, width: 42, height: 28); p3.addSubview(loopButton)
 
-        let outTitle = label("RENDER / OUTPUT", size: 11, weight: .bold, color: .white); outTitle.frame = NSRect(x: 16, y: panelH - 126, width: 100, height: 18); p3.addSubview(outTitle)
-        let outputHelp = label("Event gain + TYPE TRIM + crossfades are rendered to RG-SIB export.", size: 10, color: NSColor(hex: 0x71818D)); outputHelp.frame = NSRect(x: 16, y: panelH - 158, width: rightW - 32, height: 32); outputHelp.lineBreakMode = .byWordWrapping; outputHelp.maximumNumberOfLines = 2; p3.addSubview(outputHelp)
-        exportButton = button("Export RG-SIB", action: #selector(exportAudio)); exportButton.frame = NSRect(x: 16, y: 64, width: rightW - 32, height: 36); exportButton.isEnabled = false; p3.addSubview(exportButton)
-        stopMode = NSSegmentedControl(labels: ["CONTINUE", "RETURN"], trackingMode: .selectOne, target: self, action: nil); stopMode.selectedSegment = 0; stopMode.frame = NSRect(x: 16, y: 18, width: 176, height: 28); p3.addSubview(stopMode)
-        let prev = button("←", action: #selector(previousEvent)); prev.frame = NSRect(x: rightW - 124, y: 18, width: 48, height: 28); p3.addSubview(prev)
-        let next = button("→", action: #selector(nextEvent)); next.frame = NSRect(x: rightW - 68, y: 18, width: 48, height: 28); p3.addSubview(next)
+        let outTitle = label("OUTPUT", size: 11, weight: .bold, color: .white); outTitle.frame = NSRect(x: 16, y: panelH - 140, width: 100, height: 18); p3.addSubview(outTitle)
+        let outputHelp = label("Event gain + TYPE TRIM + crossfades are rendered to RG-SIB export.", size: 10, color: NSColor(hex: 0x71818D)); outputHelp.frame = NSRect(x: 16, y: panelH - 168, width: rightW - 32, height: 30); outputHelp.lineBreakMode = .byWordWrapping; outputHelp.maximumNumberOfLines = 2; p3.addSubview(outputHelp)
+        exportButton = button("Export RG-SIB", action: #selector(exportAudio)); exportButton.frame = NSRect(x: 16, y: 52, width: rightW - 32, height: 32); exportButton.isEnabled = false; p3.addSubview(exportButton)
+        stopMode = NSSegmentedControl(labels: ["CONTINUE", "RETURN"], trackingMode: .selectOne, target: self, action: nil); stopMode.selectedSegment = 0; stopMode.frame = NSRect(x: 16, y: 14, width: min(150, rightW - 110), height: 26); p3.addSubview(stopMode)
+        let prev = button("←", action: #selector(previousEvent)); prev.frame = NSRect(x: rightW - 92, y: 14, width: 34, height: 26); p3.addSubview(prev)
+        let next = button("→", action: #selector(nextEvent)); next.frame = NSRect(x: rightW - 52, y: 14, width: 34, height: 26); p3.addSubview(next)
 
         fileInfo = label("Drop WAV/AIFF or Open WAV", size: 10, color: NSColor(hex: 0x697A87))
-        fileInfo.frame = NSRect(x: 44, y: 35, width: w * 0.44, height: 18)
+        fileInfo.frame = NSRect(x: 360, y: h - 66, width: max(260, mainW - 690), height: 20)
         root.addSubview(fileInfo)
         detectedLabel = label("Detected: 0 events", size: 10, color: NSColor(hex: 0x657683))
-        detectedLabel.frame = NSRect(x: 44, y: 17, width: 220, height: 18)
+        detectedLabel.frame = NSRect(x: 42, y: 18, width: 220, height: 18)
         root.addSubview(detectedLabel)
         eventInfo = label("READY", size: 10, color: NSColor(hex: 0x7F909D))
         eventInfo.frame = NSRect(x: 280, y: 17, width: w - 610, height: 18)
@@ -1667,12 +1693,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             let title = String(format: "%@   [%@]   %.1f dB\n%@", formatTime(e.peakTime), e.kind, e.gainDB, note)
             let b = NSButton(title: title, target: self, action: #selector(selectAnnotationEvent(_:)))
             b.tag = i
-            b.bezelStyle = .texturedRounded
+            b.bezelStyle = .rounded
             b.alignment = .left
             b.font = NSFont.systemFont(ofSize: 10, weight: i == timeline.selectedIndex ? .semibold : .regular)
             b.contentTintColor = i == timeline.selectedIndex ? NSColor(hex: 0x4AA8FF) : NSColor(hex: 0xD1D8DE)
             b.widthAnchor.constraint(equalToConstant: 284).isActive = true
-            b.heightAnchor.constraint(equalToConstant: 48).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 54).isActive = true
             annotationStack.addArrangedSubview(b)
         }
         annotationStack.needsLayout = true
