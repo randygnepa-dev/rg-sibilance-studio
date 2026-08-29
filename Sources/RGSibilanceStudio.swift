@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.20"
+let RGVersion = "0.2.21"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -216,6 +216,7 @@ final class TimelineView: NSView {
     var onEventBoundsChanged: ((Int, Double, Double) -> Void)?
     var onPlayEvent: ((Int) -> Void)?
     var onEventGainChanged: ((Int, Double) -> Void)?
+    var onEventFadesChanged: ((Int, Double, Double) -> Void)?
 
     private var zoom = 1.0
     private var viewStart = 0.0
@@ -230,6 +231,8 @@ final class TimelineView: NSView {
     private var highlightedTime: Double?
     private var boundaryDrag: Int = 0
     private var gainDragIndex: Int?
+    private var fadeDragIndex: Int?
+    private var fadeDragSide: Int = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -406,8 +409,24 @@ final class TimelineView: NSView {
 
         if let i = selectedIndex, events.indices.contains(i), gainFaderRect(for: i).contains(p) {
             gainDragIndex = i
-            updateGainDrag(i, x: p.x)
+            updateGainDrag(i, y: p.y)
             return
+        }
+
+        if let i = selectedIndex, events.indices.contains(i) {
+            let e = events[i]
+            let inX = xForTime(min(e.end, e.start + e.fadeIn))
+            let outX = xForTime(max(e.start, e.end - e.fadeOut))
+            if abs(p.x - inX) <= 9 && abs(p.y - plotRect.midY) <= 42 {
+                fadeDragIndex = i
+                fadeDragSide = -1
+                return
+            }
+            if abs(p.x - outX) <= 9 && abs(p.y - plotRect.midY) <= 42 {
+                fadeDragIndex = i
+                fadeDragSide = 1
+                return
+            }
         }
 
         if let i = selectedIndex, events.indices.contains(i) {
@@ -445,7 +464,9 @@ final class TimelineView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if let i = gainDragIndex, events.indices.contains(i) {
-            updateGainDrag(i, x: p.x)
+            updateGainDrag(i, y: p.y)
+        } else if let i = fadeDragIndex, events.indices.contains(i) {
+            updateFadeDrag(i, side: fadeDragSide, x: p.x)
         } else if boundaryDrag != 0, let i = selectedIndex, events.indices.contains(i), let m = model {
             var e = events[i]
             let t = min(max(0, timeForX(min(max(p.x, plotRect.minX), plotRect.maxX))), m.duration)
@@ -491,6 +512,8 @@ final class TimelineView: NSView {
         rulerDragging = false
         boundaryDrag = 0
         gainDragIndex = nil
+        fadeDragIndex = nil
+        fadeDragSide = 0
         needsDisplay = true
     }
 
@@ -509,17 +532,47 @@ final class TimelineView: NSView {
     private func gainFaderRect(for i: Int) -> NSRect {
         guard events.indices.contains(i) else { return .zero }
         let centerX = xForTime(events[i].peakTime)
-        return NSRect(x: centerX - 34, y: plotRect.maxY - 57, width: 68, height: 18)
+        return NSRect(x: centerX - 14, y: plotRect.midY - 76, width: 28, height: 152)
     }
 
-    private func updateGainDrag(_ i: Int, x: CGFloat) {
+    private func updateGainDrag(_ i: Int, y: CGFloat) {
         guard events.indices.contains(i) else { return }
-        let rect = gainFaderRect(for: i)
-        let fraction = min(1, max(0, (x - rect.minX) / max(1, rect.width)))
-        let value = -12.0 + Double(fraction) * 12.0
-        events[i].gainDB = value
-        onEventGainChanged?(i, value)
+        let range: CGFloat = 68
+        let clampedY = min(plotRect.midY + range, max(plotRect.midY - range, y))
+        let normalized = Double((clampedY - (plotRect.midY - range)) / (range * 2))
+        let value = -18.0 + normalized * 18.0
+        events[i].gainDB = min(0, max(-18, value))
+        onEventGainChanged?(i, events[i].gainDB)
         needsDisplay = true
+    }
+
+    private func updateFadeDrag(_ i: Int, side: Int, x: CGFloat) {
+        guard events.indices.contains(i) else { return }
+        var e = events[i]
+        let t = timeForX(min(max(x, plotRect.minX), plotRect.maxX))
+        let maxFade = max(0, (e.end - e.start) * 0.48)
+        if side < 0 {
+            e.fadeIn = min(maxFade, max(0, t - e.start))
+        } else {
+            e.fadeOut = min(maxFade, max(0, e.end - t))
+        }
+        events[i] = e
+        onEventFadesChanged?(i, e.fadeIn, e.fadeOut)
+        needsDisplay = true
+    }
+
+    private func visualGain(at time: Double) -> Double {
+        guard let e = events.first(where: { time >= $0.start && time <= $0.end }) else { return 1.0 }
+        let target = pow(10.0, e.gainDB / 20.0)
+        if e.fadeIn > 0, time < e.start + e.fadeIn {
+            let x = min(1, max(0, (time - e.start) / e.fadeIn))
+            return 1.0 + (target - 1.0) * x
+        }
+        if e.fadeOut > 0, time > e.end - e.fadeOut {
+            let x = min(1, max(0, (e.end - time) / e.fadeOut))
+            return 1.0 + (target - 1.0) * x
+        }
+        return target
     }
 
     func followPlayback(to time: Double) {
@@ -607,8 +660,10 @@ final class TimelineView: NSView {
                 }
             }
             let x = plotRect.minX + CGFloat(column) / CGFloat(max(1, columns - 1)) * plotRect.width
-            path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * plotRect.height * 0.48 * fixedVerticalScale))
-            path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * plotRect.height * 0.48 * fixedVerticalScale))
+            let time = viewStart + Double(column) / Double(max(1, columns - 1)) * visibleDuration
+            let gain = CGFloat(visualGain(at: time))
+            path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * gain * plotRect.height * 0.48 * fixedVerticalScale))
+            path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * gain * plotRect.height * 0.48 * fixedVerticalScale))
         }
 
         NSColor(hex: 0x2F95FF).setStroke()
@@ -698,20 +753,48 @@ final class TimelineView: NSView {
 
             if selected {
                 let fader = gainFaderRect(for: i)
-                let lineY = fader.midY
-                let line = NSBezierPath()
-                line.move(to: NSPoint(x: fader.minX + 4, y: lineY))
-                line.line(to: NSPoint(x: fader.maxX - 4, y: lineY))
-                NSColor.white.withAlphaComponent(0.32).setStroke()
-                line.lineWidth = 2
-                line.stroke()
-                let norm = CGFloat((min(0, max(-12, e.gainDB)) + 12) / 12)
-                let knobX = fader.minX + 4 + norm * (fader.width - 8)
-                let knob = NSBezierPath(ovalIn: NSRect(x: knobX - 5, y: lineY - 5, width: 10, height: 10))
+                let centerX = fader.midX
+                let range: CGFloat = 68
+                let rail = NSBezierPath()
+                rail.move(to: NSPoint(x: centerX, y: plotRect.midY - range))
+                rail.line(to: NSPoint(x: centerX, y: plotRect.midY + range))
+                NSColor.white.withAlphaComponent(0.24).setStroke()
+                rail.lineWidth = 2
+                rail.stroke()
+                let norm = CGFloat((min(0, max(-18, e.gainDB)) + 18) / 18)
+                let knobY = plotRect.midY - range + norm * range * 2
+                let knob = NSBezierPath(roundedRect: NSRect(x: centerX - 9, y: knobY - 6, width: 18, height: 12), xRadius: 5, yRadius: 5)
                 NSColor.white.setFill()
                 knob.fill()
-                let gattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold), .foregroundColor: NSColor.white.withAlphaComponent(0.85)]
-                String(format: "%.1f dB", e.gainDB).draw(at: NSPoint(x: fader.maxX + 4, y: fader.minY + 3), withAttributes: gattrs)
+                let gattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold), .foregroundColor: NSColor.white.withAlphaComponent(0.9)]
+                String(format: "%.1f", e.gainDB).draw(at: NSPoint(x: centerX + 13, y: knobY - 5), withAttributes: gattrs)
+
+                let inX = xForTime(min(e.end, e.start + e.fadeIn))
+                let outX = xForTime(max(e.start, e.end - e.fadeOut))
+                let fadeTop = plotRect.midY + 42
+                let fadeBottom = plotRect.midY - 42
+                let fadeInPath = NSBezierPath()
+                fadeInPath.move(to: NSPoint(x: startX, y: fadeTop))
+                fadeInPath.line(to: NSPoint(x: inX, y: fadeBottom))
+                color.withAlphaComponent(0.9).setStroke()
+                fadeInPath.lineWidth = 2
+                fadeInPath.stroke()
+                let fadeOutPath = NSBezierPath()
+                fadeOutPath.move(to: NSPoint(x: outX, y: fadeBottom))
+                fadeOutPath.line(to: NSPoint(x: endX, y: fadeTop))
+                fadeOutPath.lineWidth = 2
+                fadeOutPath.stroke()
+                for x in [inX, outX] {
+                    let h = NSBezierPath(ovalIn: NSRect(x: x - 6, y: plotRect.midY - 6, width: 12, height: 12))
+                    color.setFill()
+                    h.fill()
+                    NSColor.white.setStroke()
+                    h.lineWidth = 1
+                    h.stroke()
+                }
+                let fattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.72)]
+                String(format: "IN %.0f ms", e.fadeIn * 1000).draw(at: NSPoint(x: startX + 4, y: fadeTop + 5), withAttributes: fattrs)
+                String(format: "OUT %.0f ms", e.fadeOut * 1000).draw(at: NSPoint(x: max(startX, endX - 58), y: fadeTop + 5), withAttributes: fattrs)
             }
         }
     }
@@ -753,7 +836,7 @@ final class TimelineView: NSView {
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   drag waveform: scrub   •   drag region edges: edit START/END   •   drag time ruler: move timeline   •   Space: play/stop".draw(
+        "Scroll: zoom   •   center fader: event gain   •   fade dots: crossfade length   •   region edges: START/END   •   Space: play/stop".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -1010,6 +1093,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onEventBoundsChanged = { [weak self] i, start, end in self?.eventBoundsChanged(i, start: start, end: end) }
         timeline.onPlayEvent = { [weak self] i in self?.playRegionOnly(i) }
         timeline.onEventGainChanged = { [weak self] i, gain in self?.eventGainChanged(i, gain: gain) }
+        timeline.onEventFadesChanged = { [weak self] i, fadeIn, fadeOut in self?.eventFadesChanged(i, fadeIn: fadeIn, fadeOut: fadeOut) }
         root.addSubview(timeline)
 
         fileInfo = label("Drop WAV/AIFF directly into the waveform window", size: 11, color: NSColor(hex: 0x778895))
@@ -1256,9 +1340,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
     private func eventGainChanged(_ i: Int, gain: Double) {
         guard events.indices.contains(i) else { return }
-        events[i].gainDB = min(0, max(-12, gain))
+        events[i].gainDB = min(0, max(-18, gain))
         selectEvent(i)
         status.stringValue = String(format: "EVENT #%d GAIN %.1f dB", i + 1, events[i].gainDB)
+    }
+
+    private func eventFadesChanged(_ i: Int, fadeIn: Double, fadeOut: Double) {
+        guard events.indices.contains(i) else { return }
+        events[i].fadeIn = fadeIn
+        events[i].fadeOut = fadeOut
+        fadeInSlider.doubleValue = fadeIn * 1000
+        fadeOutSlider.doubleValue = fadeOut * 1000
+        fadeInValue.stringValue = String(format: "%.0f ms", fadeIn * 1000)
+        fadeOutValue.stringValue = String(format: "%.0f ms", fadeOut * 1000)
+        timeline.events = events
+        selectEvent(i)
+        status.stringValue = String(format: "EVENT #%d CROSSFADES — IN %.0f ms / OUT %.0f ms", i + 1, fadeIn * 1000, fadeOut * 1000)
     }
 
     @objc private func typeTrimChanged() {
