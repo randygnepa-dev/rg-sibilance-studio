@@ -107,4 +107,4 @@ jobs:
             git push
           fi
 
-# trigger 0.3.0 beta visual shell build
+# trigger 0.3.1 responsive UI, spectrogram and whistle suppressor build
