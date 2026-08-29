@@ -1,13 +1,4 @@
-release=0.2.26
-good_learning_library=true
-self_reference=true
-external_reference_load=true
-reference_morph_functional=true
-reference_blend_functional=true
-spectral_repair_5band=true
-delta_audition=true
-sibilance_only_audition=true
-level_matched_repair_audition=true
-minimum_intervention_auto_safe=true
-apply_similar_full_recipe=true
-retry=2
+release=0.2.27
+fix_local_swift_entrypoint=true
+preserve_all_0_2_26_features=true
+retry=1
