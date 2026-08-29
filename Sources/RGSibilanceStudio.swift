@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.17"
+let RGVersion = "0.2.18"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -766,6 +766,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var playButton: NSButton!
     private var loopButton: NSButton!
     private var kindPopup: NSPopUpButton!
+    private var typeTrimSlider: NSSlider!
+    private var typeTrimValue: NSTextField!
     private var stopMode: NSSegmentedControl!
 
     private var model = AudioModel()
@@ -781,6 +783,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var transportTimer: Timer?
     private var transportPlaying = false
     private var transportStartTime: Double = 0
+    private var typeTrims: [String: Double] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildUI()
@@ -883,18 +886,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         typeLabel.frame = NSRect(x: 15, y: panelH - 111, width: 90, height: 18)
         p2.addSubview(typeLabel)
         kindPopup = NSPopUpButton(frame: NSRect(x: 108, y: panelH - 116, width: 118, height: 25), pullsDown: false)
-        kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "T", "D", "P", "B", "F", "CH", "OTHER"])
+        kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "T", "D", "K", "P", "B", "F", "CH", "OTHER"])
         kindPopup.target = self
         kindPopup.action = #selector(kindChanged)
         kindPopup.isEnabled = false
         p2.addSubview(kindPopup)
 
-        let rs = label("Repair Strength", size: 11); rs.frame = NSRect(x: 15, y: panelH - 146, width: 105, height: 18); p2.addSubview(rs)
+        let trimLabel = label("TYPE TRIM", size: 11)
+        trimLabel.frame = NSRect(x: 15, y: panelH - 146, width: 88, height: 18)
+        p2.addSubview(trimLabel)
+        typeTrimSlider = NSSlider(value: 0, minValue: -12, maxValue: 0, target: self, action: #selector(typeTrimChanged))
+        typeTrimSlider.frame = NSRect(x: 102, y: panelH - 149, width: pw - 185, height: 22)
+        typeTrimSlider.isEnabled = false
+        p2.addSubview(typeTrimSlider)
+        typeTrimValue = label("0.0 dB", size: 10, weight: .semibold, color: NSColor(hex: 0x9DB4C5))
+        typeTrimValue.alignment = .right
+        typeTrimValue.frame = NSRect(x: pw - 79, y: panelH - 146, width: 62, height: 18)
+        p2.addSubview(typeTrimValue)
+
+        let rs = label("Repair Strength", size: 11); rs.frame = NSRect(x: 15, y: panelH - 178, width: 105, height: 18); p2.addSubview(rs)
         repairSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
-        repairSlider.frame = NSRect(x: 119, y: panelH - 149, width: pw - 150, height: 22)
+        repairSlider.frame = NSRect(x: 119, y: panelH - 181, width: pw - 150, height: 22)
         repairSlider.isEnabled = false
         p2.addSubview(repairSlider)
-        let repairNote = label("Repair engine follows after detector validation", size: 10, color: NSColor(hex: 0x667783))
+        let repairNote = label("TYPE TRIM applies to every event of the selected phoneme", size: 10, color: NSColor(hex: 0x667783))
         repairNote.frame = NSRect(x: 15, y: 18, width: pw - 30, height: 18)
         p2.addSubview(repairNote)
 
@@ -1025,7 +1040,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let e = events[i]
         kindPopup.isEnabled = true
         kindPopup.selectItem(withTitle: e.kind)
-        eventInfo.stringValue = String(format: "#%03d   %@   %.3f–%.3f s   score %.2f   %@", i + 1, e.kind, e.start, e.end, e.score, e.userLabel.isEmpty ? "UNRATED" : e.userLabel)
+        typeTrimSlider.isEnabled = true
+        let trim = typeTrims[e.kind] ?? 0
+        typeTrimSlider.doubleValue = trim
+        typeTrimValue.stringValue = String(format: "%.1f dB", trim)
+        eventInfo.stringValue = String(format: "#%03d   %@   %.3f–%.3f s   score %.2f   %@   type trim %.1f dB", i + 1, e.kind, e.start, e.end, e.score, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, trim)
+    }
+
+    @objc private func typeTrimChanged() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        let kind = events[i].kind
+        let value = typeTrimSlider.doubleValue
+        typeTrims[kind] = value
+        typeTrimValue.stringValue = String(format: "%.1f dB", value)
+        selectEvent(i)
+        let count = events.filter { $0.kind == kind }.count
+        status.stringValue = String(format: "%@ TYPE TRIM %.1f dB — %d events", kind, value, count)
     }
 
     @objc private func kindChanged() {
@@ -1074,6 +1104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         if events.isEmpty {
             timeline.selectedIndex = nil
             kindPopup.isEnabled = false
+            typeTrimSlider.isEnabled = false
+            typeTrimValue.stringValue = "0.0 dB"
             eventInfo.stringValue = "No sibilance selected"
         } else {
             let next = min(i, events.count - 1)
