@@ -107,4 +107,4 @@ jobs:
             git push
           fi
 
-# trigger 0.2.29 prebuilt updater build
+# trigger 0.2.30 focused editor UI build
