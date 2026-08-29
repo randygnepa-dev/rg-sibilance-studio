@@ -29,23 +29,24 @@ jobs:
           VERSION="$(tr -d '[:space:]' < VERSION)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building RG Sibilance Studio $VERSION"
-      - name: Prepare Swift sources
+      - name: Prepare exact legacy updater sources
         shell: bash
         run: |
           rm -rf build-src
           mkdir -p build-src
-          cp Sources/*.swift build-src/
+          cp Sources/RGSibilanceStudio.swift build-src/
+          cp Sources/RGAdvancedEngine.swift build-src/
       - name: Compile Apple Silicon
         shell: bash
         run: |
           mkdir -p build/arm64 build/x86_64 dist
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc build-src/*.swift -sdk "$SDK" -target arm64-apple-macosx12.0 -framework Cocoa -framework AVFoundation -O -o build/arm64/RGSibilanceStudio
+          xcrun --sdk macosx swiftc build-src/RGSibilanceStudio.swift build-src/RGAdvancedEngine.swift -sdk "$SDK" -target arm64-apple-macosx12.0 -framework Cocoa -framework AVFoundation -O -o build/arm64/RGSibilanceStudio
       - name: Compile Intel
         shell: bash
         run: |
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc build-src/*.swift -sdk "$SDK" -target x86_64-apple-macosx12.0 -framework Cocoa -framework AVFoundation -O -o build/x86_64/RGSibilanceStudio
+          xcrun --sdk macosx swiftc build-src/RGSibilanceStudio.swift build-src/RGAdvancedEngine.swift -sdk "$SDK" -target x86_64-apple-macosx12.0 -framework Cocoa -framework AVFoundation -O -o build/x86_64/RGSibilanceStudio
       - name: Create universal binary
         shell: bash
         run: |
@@ -106,4 +107,4 @@ jobs:
             git push
           fi
 
-# trigger verified 0.2.27 build
+# bridge test: exact two-source legacy updater compile
