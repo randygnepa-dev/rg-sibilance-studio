@@ -15,20 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_25.py
+        run: python3 scripts/patch_0_2_26.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.25"' Sources/RGSibilanceStudio.swift
-          grep -F 'renderFullPreview' Sources/RGSibilanceStudio.swift
-          grep -F 'renderAudition' Sources/RGSibilanceStudio.swift
-          grep -F 'setShouldAntialias(true)' Sources/RGSibilanceStudio.swift
-          grep -F 'typeTrims: [String: Double]' Sources/RGSibilanceStudio.swift
-          grep -F 'Export RG-SIB' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.26"' Sources/RGSibilanceStudio.swift
+          grep -F 'referenceMorphSelected' Sources/RGSibilanceStudio.swift
+          grep -F 'referenceBlendSelected' Sources/RGSibilanceStudio.swift
+          grep -F 'RGLearningStore' Sources/RGSibilanceStudio.swift
+          grep -F 'RGAuditionMode' Sources/RGSibilanceStudio.swift
+          grep -F 'spectralDB' Sources/RGSibilanceStudio.swift
+          grep -F 'final class RGLearningStore' Sources/RGAdvancedEngine.swift
+          grep -F 'renderAuditionMode' Sources/RGAdvancedEngine.swift
+          grep -F 'processAdvanced' Sources/RGAdvancedEngine.swift
       - name: Commit source and version
         run: |
-          printf '0.2.25\n' > VERSION
+          printf '0.2.26\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.25 real repair audition and smooth waveform"
+          git add Sources/RGSibilanceStudio.swift Sources/RGAdvancedEngine.swift VERSION
+          git commit -m "Release 0.2.26 functional learning reference spectral repair"
           git push
