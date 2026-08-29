@@ -3,3 +3,4 @@ auto_analyze_on_load=true
 waveform_event_editing=true
 right_click_add_delete=true
 delete_key_remove=true
+retry=2
