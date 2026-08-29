@@ -1,11 +1,6 @@
 release=0.2.23
+fix_updater_with_advanced_engine=true
 detailed_waveform=true
-spectral_bands_overlay=2-4,4-7,7-10,10-14,14-20k
-clear_time_ruler=true
-remember_last_stage_per_file=true
-restore_all_event_edits=true
-export_same_folder_suffix=RG-SIB
-auto_safe_repair=true
-apply_similar=true
-region_ab_original_repair=true
-retry=1
+spectral_bands_overlay=true
+export_rg_sib=true
+retry=2
