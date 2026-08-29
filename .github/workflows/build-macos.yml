@@ -107,4 +107,4 @@ jobs:
             git push
           fi
 
-# trigger 0.4.0 Clean Pro rebuild after Swift 6 fix
+# trigger 0.4.1 Pro Tools waveform UI build
