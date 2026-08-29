@@ -1,5 +1,8 @@
-release=0.4.0
-clean_pro=true
-swift6_spacing_fix=true
+release=0.4.1
+protools_waveform_ui=true
+waveform_only=true
 fixed_window=true
-no_overlap=true
+clip_gain_envelope=true
+fade_handles=true
+interactive_dewhistle_eq=true
+reference_workflow=true
