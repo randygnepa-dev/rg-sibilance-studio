@@ -15,17 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_27.py
+        run: python3 scripts/patch_0_2_28.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.27"' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.28"' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
           grep -F 'struct RGSibilanceStudioMain' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.27\n' > VERSION
+          printf '0.2.28\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.27 updater compile compatibility"
+          git commit -m "Release 0.2.28 bridge updater compatibility"
           git push
