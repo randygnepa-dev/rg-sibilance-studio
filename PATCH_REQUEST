@@ -1,5 +1,7 @@
-release=0.2.28
-legacy_updater_exact_two_source_build=true
-new_design_bridge=true
+release=0.2.29
+prebuilt_updater=true
+verify_sha256=true
+rollback=true
+no_local_swift_compile=true
 preserve_all_features=true
 retry=1
