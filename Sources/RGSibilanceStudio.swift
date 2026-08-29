@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.15"
+let RGVersion = "0.2.16"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -220,6 +220,8 @@ final class TimelineView: NSView {
     private var dragActive = false
     private var contextTime: Double = 0
     private var contextEventIndex: Int?
+    private var rulerDragging = false
+    private var highlightedTime: Double?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -232,7 +234,11 @@ final class TimelineView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     private var plotRect: NSRect {
-        NSRect(x: 54, y: 30, width: max(120, bounds.width - 76), height: max(90, bounds.height - 52))
+        NSRect(x: 54, y: 34, width: max(120, bounds.width - 76), height: max(90, bounds.height - 58))
+    }
+
+    private var rulerRect: NSRect {
+        NSRect(x: plotRect.minX, y: 0, width: plotRect.width, height: 32)
     }
 
     private var visibleDuration: Double {
@@ -366,14 +372,26 @@ final class TimelineView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard model != nil else { return }
         let p = convert(event.locationInWindow, from: nil)
-        guard plotRect.contains(p) else { return }
         window?.makeFirstResponder(self)
+
+        if rulerRect.contains(p) {
+            rulerDragging = true
+            lastDragX = p.x
+            let t = timeForX(p.x)
+            playhead = t
+            highlightedTime = t
+            needsDisplay = true
+            return
+        }
+
+        guard plotRect.contains(p) else { return }
         lastDragX = p.x
         panning = event.modifierFlags.contains(.option)
         scrubbing = !panning
         if scrubbing {
             let t = timeForX(p.x)
             playhead = t
+            highlightedTime = t
             onScrub?(t, true)
             selectNearestEvent(at: t)
         }
@@ -381,7 +399,16 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if panning {
+        if rulerDragging {
+            let dx = p.x - lastDragX
+            viewStart -= Double(dx / max(1, plotRect.width)) * visibleDuration
+            clampViewStart()
+            lastDragX = p.x
+            let t = timeForX(min(max(p.x, plotRect.minX), plotRect.maxX))
+            playhead = t
+            highlightedTime = t
+            needsDisplay = true
+        } else if panning {
             let dx = p.x - lastDragX
             viewStart -= Double(dx / max(1, plotRect.width)) * visibleDuration
             clampViewStart()
@@ -390,6 +417,7 @@ final class TimelineView: NSView {
         } else if scrubbing {
             let t = timeForX(p.x)
             playhead = t
+            highlightedTime = t
             onScrub?(t, true)
         }
     }
@@ -398,6 +426,24 @@ final class TimelineView: NSView {
         if scrubbing { onScrub?(playhead, false) }
         scrubbing = false
         panning = false
+        rulerDragging = false
+        needsDisplay = true
+    }
+
+    func followPlayback(to time: Double) {
+        playhead = time
+        highlightedTime = time
+        guard let m = model, m.duration > 0, zoom > 1.02 else { return }
+        let leftEdge = viewStart + visibleDuration * 0.12
+        let rightEdge = viewStart + visibleDuration * 0.78
+        if time > rightEdge {
+            viewStart = time - visibleDuration * 0.62
+            clampViewStart()
+        } else if time < leftEdge {
+            viewStart = time - visibleDuration * 0.12
+            clampViewStart()
+        }
+        needsDisplay = true
     }
 
     private func selectNearestEvent(at t: Double) {
@@ -524,20 +570,32 @@ final class TimelineView: NSView {
     }
 
     private func drawTimeScale(_ m: AudioModel) {
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9), .foregroundColor: NSColor(hex: 0x6E7E8B)]
+        NSColor(hex: 0x0A141D).setFill()
+        rulerRect.fill()
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular), .foregroundColor: NSColor(hex: 0x718493)]
         for i in 0...5 {
             let t = viewStart + visibleDuration * Double(i) / 5
             let min = Int(t) / 60
             let sec = Int(t) % 60
             let text = String(format: "%d:%02d", min, sec)
             let x = plotRect.minX + plotRect.width * CGFloat(i) / 5
-            text.draw(at: NSPoint(x: x - 12, y: 8), withAttributes: attrs)
+            text.draw(at: NSPoint(x: x - 12, y: 9), withAttributes: attrs)
+        }
+        if let t = highlightedTime, t >= viewStart && t <= viewEnd {
+            let x = xForTime(t)
+            let text = String(format: "%d:%02d.%03d", Int(t) / 60, Int(t) % 60, Int((t - floor(t)) * 1000))
+            let a: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white]
+            let size = text.size(withAttributes: a)
+            let box = NSRect(x: min(max(plotRect.minX, x - size.width / 2 - 7), plotRect.maxX - size.width - 14), y: 4, width: size.width + 14, height: 20)
+            NSColor(hex: 0x176BC1).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
+            text.draw(at: NSPoint(x: box.minX + 7, y: box.minY + 4), withAttributes: a)
         }
     }
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   drag: scrub   •   ⌥ drag: pan   •   right-click: add/delete S   •   Delete: remove selected".draw(
+        "Scroll: zoom   •   drag waveform: scrub   •   drag time ruler: move timeline   •   ⌥ drag: pan   •   Space: play/stop".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -694,6 +752,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var analyzeButton: NSButton!
     private var playButton: NSButton!
     private var loopButton: NSButton!
+    private var kindPopup: NSPopUpButton!
+    private var stopMode: NSSegmentedControl!
 
     private var model = AudioModel()
     private var events: [SibilanceEvent] = []
@@ -704,12 +764,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var scrubPlayer: AVAudioPlayer?
     private var stopTimer: Timer?
     private var loopEnabled = false
+    private var keyMonitor: Any?
+    private var transportTimer: Timer?
+    private var transportPlaying = false
+    private var transportStartTime: Double = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildUI()
         updater.onStatus = { [weak self] text in self?.status.stringValue = text }
         updater.start()
         showUpdateNoticeIfNeeded()
+        installKeyboardTransport()
     }
 
     private func label(_ text: String, size: CGFloat = 13, weight: NSFont.Weight = .regular, color: NSColor = NSColor(hex: 0xAAB5C0)) -> NSTextField {
@@ -801,9 +866,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let target = button("TARGET", action: #selector(markTarget)); target.frame = NSRect(x: 171, y: panelH - 73, width: 82, height: 29)
         let normal = button("NORMAL", action: #selector(markNormal)); normal.frame = NSRect(x: 258, y: panelH - 73, width: 86, height: 29)
         p2.addSubview(good); p2.addSubview(bad); p2.addSubview(target); p2.addSubview(normal)
-        let rs = label("Repair Strength", size: 11); rs.frame = NSRect(x: 15, y: panelH - 111, width: 105, height: 18); p2.addSubview(rs)
+        let typeLabel = label("Detected type", size: 11)
+        typeLabel.frame = NSRect(x: 15, y: panelH - 111, width: 90, height: 18)
+        p2.addSubview(typeLabel)
+        kindPopup = NSPopUpButton(frame: NSRect(x: 108, y: panelH - 116, width: 118, height: 25), pullsDown: false)
+        kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "T", "D", "P", "B", "F", "CH", "OTHER"])
+        kindPopup.target = self
+        kindPopup.action = #selector(kindChanged)
+        kindPopup.isEnabled = false
+        p2.addSubview(kindPopup)
+
+        let rs = label("Repair Strength", size: 11); rs.frame = NSRect(x: 15, y: panelH - 146, width: 105, height: 18); p2.addSubview(rs)
         repairSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
-        repairSlider.frame = NSRect(x: 119, y: panelH - 114, width: pw - 150, height: 22)
+        repairSlider.frame = NSRect(x: 119, y: panelH - 149, width: pw - 150, height: 22)
         repairSlider.isEnabled = false
         p2.addSubview(repairSlider)
         let repairNote = label("Repair engine follows after detector validation", size: 10, color: NSColor(hex: 0x667783))
@@ -817,6 +892,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         loopButton = button("Loop OFF", action: #selector(toggleLoop))
         loopButton.frame = NSRect(x: 139, y: panelH - 73, width: 95, height: 30)
         p3.addSubview(loopButton)
+        let stopLabel = label("SPACE stop", size: 10, color: NSColor(hex: 0x7F909D))
+        stopLabel.frame = NSRect(x: 15, y: panelH - 112, width: 80, height: 18)
+        p3.addSubview(stopLabel)
+        stopMode = NSSegmentedControl(labels: ["CONTINUE", "RETURN"], trackingMode: .selectOne, target: self, action: nil)
+        stopMode.selectedSegment = 0
+        stopMode.frame = NSRect(x: 92, y: panelH - 117, width: 174, height: 27)
+        p3.addSubview(stopMode)
         let prev = button("← Previous", action: #selector(previousEvent)); prev.frame = NSRect(x: 15, y: 18, width: 105, height: 29)
         let next = button("Next →", action: #selector(nextEvent)); next.frame = NSRect(x: 126, y: 18, width: 95, height: 29)
         p3.addSubview(prev); p3.addSubview(next)
@@ -928,7 +1010,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         guard events.indices.contains(i) else { return }
         timeline.selectedIndex = i
         let e = events[i]
+        kindPopup.isEnabled = true
+        kindPopup.selectItem(withTitle: e.kind)
         eventInfo.stringValue = String(format: "#%03d   %@   %.3f–%.3f s   score %.2f   %@", i + 1, e.kind, e.start, e.end, e.score, e.userLabel.isEmpty ? "UNRATED" : e.userLabel)
+    }
+
+    @objc private func kindChanged() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i), let title = kindPopup.selectedItem?.title else { return }
+        events[i].kind = title
+        timeline.events = events
+        selectEvent(i)
+        status.stringValue = "EVENT #\(i + 1) TYPE → \(title)"
     }
 
     private func mark(_ value: String) {
@@ -968,6 +1060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         detectedLabel.stringValue = "Detected: \(events.count) events"
         if events.isEmpty {
             timeline.selectedIndex = nil
+            kindPopup.isEnabled = false
             eventInfo.stringValue = "No sibilance selected"
         } else {
             let next = min(i, events.count - 1)
@@ -991,8 +1084,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.playhead = events[i].peakTime
     }
 
+    private func installKeyboardTransport() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
+            if event.keyCode == 49 && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+                self.toggleTransport()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func toggleTransport() {
+        transportPlaying ? stopTransport() : startTransport()
+    }
+
+    private func startTransport() {
+        guard let p = scrubPlayer, model.duration > 0 else { return }
+        previewPlayer?.stop()
+        stopTimer?.invalidate()
+        transportStartTime = min(max(0, timeline.playhead), max(0, p.duration - 0.01))
+        p.currentTime = transportStartTime
+        p.play()
+        transportPlaying = true
+        playButton.title = "■ Stop"
+        status.stringValue = stopMode.selectedSegment == 1 ? "PLAYING — Space returns to start" : "PLAYING — Space continues from stop"
+        transportTimer?.invalidate()
+        transportTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self = self, let player = self.scrubPlayer else { return }
+            self.timeline.followPlayback(to: player.currentTime)
+            if !player.isPlaying && self.transportPlaying {
+                self.transportPlaying = false
+                self.transportTimer?.invalidate()
+                self.playButton.title = "▶ Play event"
+                self.status.stringValue = "PLAYBACK END"
+            }
+        }
+    }
+
+    private func stopTransport() {
+        guard let p = scrubPlayer else { return }
+        let stoppedAt = p.currentTime
+        p.pause()
+        transportPlaying = false
+        transportTimer?.invalidate()
+        transportTimer = nil
+        if stopMode.selectedSegment == 1 {
+            p.currentTime = transportStartTime
+            timeline.followPlayback(to: transportStartTime)
+            status.stringValue = "STOP — returned to start"
+        } else {
+            timeline.followPlayback(to: stoppedAt)
+            status.stringValue = "STOP — locator stays at stop position"
+        }
+        playButton.title = "▶ Play event"
+    }
+
     private func scrub(to time: Double, active: Bool) {
         guard let p = scrubPlayer else { return }
+        if transportPlaying { stopTransport() }
         if active {
             p.currentTime = min(max(0, time), max(0, p.duration - 0.01))
             if !p.isPlaying { p.play() }
@@ -1038,6 +1188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         playButton.title = "▶ Play event"
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
