@@ -15,22 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/fix_0_2_26_learning_name.py
+        run: python3 scripts/patch_0_2_27.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.26"' Sources/RGSibilanceStudio.swift
-          grep -F 'referenceMorphSelected' Sources/RGSibilanceStudio.swift
-          grep -F 'referenceBlendSelected' Sources/RGSibilanceStudio.swift
-          grep -F 'RGExemplarStore' Sources/RGSibilanceStudio.swift
-          grep -F 'final class RGExemplarStore' Sources/RGAdvancedEngine.swift
-          grep -F 'RGAuditionMode' Sources/RGAdvancedEngine.swift
-          grep -F 'renderAuditionMode' Sources/RGAdvancedEngine.swift
-          grep -F 'processAdvanced' Sources/RGAdvancedEngine.swift
+          grep -F 'let RGVersion = "0.2.27"' Sources/RGSibilanceStudio.swift
+          grep -F '@main' Sources/RGSibilanceStudio.swift
+          grep -F 'struct RGSibilanceStudioMain' Sources/RGSibilanceStudio.swift
+          ! grep -F 'mv build-src/RGSibilanceStudio.swift build-src/main.swift' .github/workflows/build-macos.yml
       - name: Commit source and version
         run: |
-          printf '0.2.26\n' > VERSION
+          printf '0.2.27\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources/RGSibilanceStudio.swift Sources/RGAdvancedEngine.swift VERSION
-          git commit -m "Fix 0.2.26 exemplar learning store collision"
+          git add Sources/RGSibilanceStudio.swift .github/workflows/build-macos.yml VERSION
+          git commit -m "Release 0.2.27 updater compile compatibility"
           git push
