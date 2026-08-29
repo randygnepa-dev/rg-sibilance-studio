@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.24"
+let RGVersion = "0.2.25"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -98,7 +98,7 @@ final class AudioModel {
     var rms: Float = 0
     var overviewMin: [Float] = []
     var overviewMax: [Float] = []
-    var spectralBands = RGSpectralBands(hopSamples: 512, sampleRate: 48000, values: [])
+    var spectralBands = RGSpectralBands(hopSamples: 256, sampleRate: 48000, values: [])
 
     func load(_ url: URL) throws {
         let file = try AVAudioFile(forReading: url)
@@ -135,7 +135,7 @@ final class AudioModel {
         peak = p
         rms = samples.isEmpty ? 0 : Float(sqrt(energy / Double(samples.count)))
         buildOverview(binCount: 131072)
-        spectralBands = RGSpectralAnalyzer.makeBands(samples: samples, sampleRate: sampleRate, hopSamples: 512)
+        spectralBands = RGSpectralAnalyzer.makeBands(samples: samples, sampleRate: sampleRate, hopSamples: 256)
     }
 
     private func buildOverview(binCount: Int) {
@@ -268,6 +268,7 @@ final class TimelineView: NSView {
         }
     }
     var events: [SibilanceEvent] = [] { didSet { needsDisplay = true } }
+    var typeTrims: [String: Double] = [:] { didSet { needsDisplay = true } }
     var selectedIndex: Int? { didSet { needsDisplay = true } }
     var playhead: Double = 0 { didSet { needsDisplay = true } }
     var onSelect: ((Int) -> Void)?
@@ -654,7 +655,7 @@ final class TimelineView: NSView {
 
     private func visualGain(at time: Double) -> Double {
         guard let e = events.first(where: { time >= $0.start && time <= $0.end }) else { return 1.0 }
-        let target = pow(10.0, e.gainDB / 20.0)
+        let target = pow(10.0, min(0.0, e.gainDB + (typeTrims[e.kind] ?? 0)) / 20.0)
         if e.fadeIn > 0, time < e.start + e.fadeIn {
             let x = min(1, max(0, (time - e.start) / e.fadeIn))
             return 1.0 + (target - 1.0) * x
@@ -789,50 +790,92 @@ final class TimelineView: NSView {
 
     private func drawWaveform(_ m: AudioModel) {
         guard !m.samples.isEmpty else { return }
-        let columns = max(180, Int(plotRect.width * 1.15))
+        NSGraphicsContext.current?.cgContext.setShouldAntialias(true)
+        NSGraphicsContext.current?.cgContext.setAllowsAntialiasing(true)
+
+        let pixelColumns = max(240, Int(plotRect.width * 2.0))
         let startSample = max(0, min(m.samples.count - 1, Int(viewStart * m.sampleRate)))
         let endSample = max(startSample + 1, min(m.samples.count, Int(viewEnd * m.sampleRate) + 1))
         let visibleSamples = max(1, endSample - startSample)
-        let spp = Double(visibleSamples) / Double(columns)
-        let path = NSBezierPath()
+        let samplesPerColumn = Double(visibleSamples) / Double(pixelColumns)
+        let amp = plotRect.height * 0.47 * fixedVerticalScale
 
-        if spp <= 2048 {
-            for column in 0..<columns {
-                let s0 = min(endSample - 1, startSample + Int(Double(column) * spp))
-                let s1 = min(endSample, max(s0 + 1, startSample + Int(Double(column + 1) * spp)))
+        // At sample-level zoom draw the true waveform as one continuous anti-aliased trace.
+        if samplesPerColumn <= 2.2 {
+            let trace = NSBezierPath()
+            trace.lineJoinStyle = .round
+            trace.lineCapStyle = .round
+            let count = max(2, min(visibleSamples, Int(plotRect.width * 4.0)))
+            for c in 0..<count {
+                let f = Double(c) / Double(max(1, count - 1))
+                let samplePosition = Double(startSample) + f * Double(max(1, visibleSamples - 1))
+                let i0 = min(m.samples.count - 1, max(0, Int(floor(samplePosition))))
+                let i1 = min(m.samples.count - 1, i0 + 1)
+                let frac = Float(samplePosition - Double(i0))
+                let v = m.samples[i0] * (1 - frac) + m.samples[i1] * frac
+                let t = samplePosition / m.sampleRate
+                let g = CGFloat(visualGain(at: t))
+                let x = plotRect.minX + CGFloat(f) * plotRect.width
+                let y = plotRect.midY + CGFloat(v) * g * amp
+                if c == 0 { trace.move(to: NSPoint(x: x, y: y)) }
+                else { trace.line(to: NSPoint(x: x, y: y)) }
+            }
+            NSColor(hex: 0x42B0FF).setStroke()
+            trace.lineWidth = 1.35
+            trace.stroke()
+        } else {
+            var tops: [NSPoint] = []
+            var bottoms: [NSPoint] = []
+            tops.reserveCapacity(pixelColumns)
+            bottoms.reserveCapacity(pixelColumns)
+
+            for c in 0..<pixelColumns {
+                let s0 = min(endSample - 1, startSample + Int(Double(c) * samplesPerColumn))
+                let s1 = min(endSample, max(s0 + 1, startSample + Int(Double(c + 1) * samplesPerColumn)))
                 var mn = m.samples[s0]
                 var mx = m.samples[s0]
                 if s1 > s0 + 1 {
-                    for i in (s0 + 1)..<s1 { mn = min(mn, m.samples[i]); mx = max(mx, m.samples[i]) }
+                    for i in (s0 + 1)..<s1 {
+                        let v = m.samples[i]
+                        if v < mn { mn = v }
+                        if v > mx { mx = v }
+                    }
                 }
-                let x = plotRect.minX + CGFloat(column) / CGFloat(max(1, columns - 1)) * plotRect.width
-                let time = Double(s0) / m.sampleRate
-                let gain = CGFloat(visualGain(at: time))
-                path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * gain * plotRect.height * 0.47 * fixedVerticalScale))
-                path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * gain * plotRect.height * 0.47 * fixedVerticalScale))
+                // Blend neighboring extrema slightly so the display is continuous rather than rectangular.
+                if c > 0 {
+                    let prevTop = Float((tops.last!.y - plotRect.midY) / max(0.0001, amp))
+                    let prevBottom = Float((bottoms.last!.y - plotRect.midY) / max(0.0001, amp))
+                    mx = mx * 0.78 + prevTop * 0.22
+                    mn = mn * 0.78 + prevBottom * 0.22
+                }
+                let f = Double(c) / Double(max(1, pixelColumns - 1))
+                let t = viewStart + f * visibleDuration
+                let g = CGFloat(visualGain(at: t))
+                let x = plotRect.minX + CGFloat(f) * plotRect.width
+                tops.append(NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * g * amp))
+                bottoms.append(NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * g * amp))
             }
-        } else {
-            let nBins = m.overviewMin.count
-            let total = max(0.0001, m.duration)
-            let startBin = max(0, min(nBins - 1, Int(viewStart / total * Double(nBins))))
-            let endBin = max(startBin + 1, min(nBins, Int(viewEnd / total * Double(nBins)) + 1))
-            let binsPerColumn = Double(max(1, endBin - startBin)) / Double(columns)
-            for column in 0..<columns {
-                let b0 = min(endBin - 1, startBin + Int(Double(column) * binsPerColumn))
-                let b1 = min(endBin, max(b0 + 1, startBin + Int(Double(column + 1) * binsPerColumn)))
-                var mn = m.overviewMin[b0]
-                var mx = m.overviewMax[b0]
-                if b1 > b0 + 1 { for b in (b0 + 1)..<b1 { mn = min(mn, m.overviewMin[b]); mx = max(mx, m.overviewMax[b]) } }
-                let x = plotRect.minX + CGFloat(column) / CGFloat(max(1, columns - 1)) * plotRect.width
-                let time = viewStart + Double(column) / Double(max(1, columns - 1)) * visibleDuration
-                let gain = CGFloat(visualGain(at: time))
-                path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * gain * plotRect.height * 0.47 * fixedVerticalScale))
-                path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * gain * plotRect.height * 0.47 * fixedVerticalScale))
-            }
+
+            let fill = NSBezierPath()
+            if let first = tops.first { fill.move(to: first) }
+            for pt in tops.dropFirst() { fill.line(to: pt) }
+            for pt in bottoms.reversed() { fill.line(to: pt) }
+            fill.close()
+            NSColor(hex: 0x269AF4, alpha: 0.42).setFill()
+            fill.fill()
+
+            let topPath = NSBezierPath()
+            let bottomPath = NSBezierPath()
+            topPath.lineJoinStyle = .round; bottomPath.lineJoinStyle = .round
+            if let first = tops.first { topPath.move(to: first) }
+            for pt in tops.dropFirst() { topPath.line(to: pt) }
+            if let first = bottoms.first { bottomPath.move(to: first) }
+            for pt in bottoms.dropFirst() { bottomPath.line(to: pt) }
+            NSColor(hex: 0x45B2FF).setStroke()
+            topPath.lineWidth = 0.9; bottomPath.lineWidth = 0.9
+            topPath.stroke(); bottomPath.stroke()
         }
-        NSColor(hex: 0x38A9FF).setStroke()
-        path.lineWidth = spp < 80 ? 1.15 : 0.9
-        path.stroke()
+
         let zero = NSBezierPath()
         zero.move(to: NSPoint(x: plotRect.minX, y: plotRect.midY))
         zero.line(to: NSPoint(x: plotRect.maxX, y: plotRect.midY))
@@ -1278,6 +1321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private let sessionStore = SessionStore()
     private var previewPlayer: AVAudioPlayer?
     private var scrubPlayer: AVAudioPlayer?
+    private var transportPlayer: AVAudioPlayer?
     private var stopTimer: Timer?
     private var fadeTimer: Timer?
     private var loopEnabled = false
@@ -1508,6 +1552,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         }
         let amount = min(1, max(0, sender.doubleValue))
         events[i].gainDB = -12.0 * amount
+        previewPlayer?.stop()
+        transportPlayer?.stop()
         timeline.events = events
         selectEvent(i)
         saveCurrentSession()
@@ -1564,8 +1610,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                 DispatchQueue.main.async {
                     self.model = m
                     self.events = []
+                    self.typeTrims = [:]
                     self.scrubPlayer = scrub
                     self.timeline.model = m
+                    self.timeline.typeTrims = [:]
                     self.timeline.events = []
                     self.timeline.selectedIndex = nil
                     self.timeline.playhead = 0
@@ -1574,6 +1622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                     if let session = self.sessionStore.load(for: url, duration: m.duration, sampleRate: m.sampleRate) {
                         self.events = session.events
                         self.typeTrims = session.typeTrims
+                        self.timeline.typeTrims = session.typeTrims
                         self.timeline.events = session.events
                         let restoredIndex = min(max(0, session.selectedIndex ?? 0), max(0, session.events.count - 1))
                         self.timeline.selectedIndex = session.events.isEmpty ? nil : restoredIndex
@@ -1723,6 +1772,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private func eventGainChanged(_ i: Int, gain: Double) {
         guard events.indices.contains(i) else { return }
         events[i].gainDB = min(0, max(-18, gain))
+        previewPlayer?.stop()
+        transportPlayer?.stop()
+        timeline.events = events
         selectEvent(i)
         saveCurrentSession()
         status.stringValue = String(format: "EVENT #%d GAIN %.1f dB", i + 1, events[i].gainDB)
@@ -1732,6 +1784,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         guard events.indices.contains(i) else { return }
         events[i].fadeIn = fadeIn
         events[i].fadeOut = fadeOut
+        previewPlayer?.stop()
+        transportPlayer?.stop()
         fadeInSlider.doubleValue = fadeIn * 1000
         fadeOutSlider.doubleValue = fadeOut * 1000
         fadeInValue.stringValue = String(format: "%.0f ms", fadeIn * 1000)
@@ -1747,6 +1801,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let kind = events[i].kind
         let value = typeTrimSlider.doubleValue
         typeTrims[kind] = value
+        timeline.typeTrims = typeTrims
+        previewPlayer?.stop()
+        transportPlayer?.stop()
         typeTrimValue.stringValue = String(format: "%.1f dB", value)
         selectEvent(i)
         let count = events.filter { $0.kind == kind }.count
@@ -1852,32 +1909,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         transportPlaying ? stopTransport() : startTransport()
     }
 
+    private func activeTransportPlayer() -> AVAudioPlayer? {
+        return transportPlayer ?? scrubPlayer
+    }
+
     private func startTransport() {
-        guard let p = scrubPlayer, model.duration > 0 else { return }
+        guard let url = model.url, model.duration > 0 else { return }
         previewPlayer?.stop()
         stopTimer?.invalidate()
-        transportStartTime = min(max(0, timeline.playhead), max(0, p.duration - 0.01))
-        p.currentTime = transportStartTime
-        p.play()
-        transportPlaying = true
-        playButton.title = "■ Stop"
-        status.stringValue = stopMode.selectedSegment == 1 ? "PLAYING — Space returns to start" : "PLAYING — Space continues from stop"
-        transportTimer?.invalidate()
-        transportTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            guard let self = self, let player = self.scrubPlayer else { return }
-            self.timeline.followPlayback(to: player.currentTime)
-            self.currentTimeLabel?.stringValue = self.formatTime(player.currentTime)
-            if !player.isPlaying && self.transportPlaying {
-                self.transportPlaying = false
-                self.transportTimer?.invalidate()
-                self.playButton.title = "▶ Play event"
-                self.status.stringValue = "PLAYBACK END"
+        let repaired = auditionMode?.selectedSegment != 0
+        transportPlayer?.stop()
+        transportPlayer = nil
+        do {
+            let p: AVAudioPlayer
+            if repaired {
+                status.stringValue = "RENDERING REPAIR PREVIEW…"
+                let rendered = try RGRenderEngine.renderFullPreview(sourceURL: url, events: events, typeTrims: typeTrims, repaired: true)
+                p = try AVAudioPlayer(contentsOf: rendered)
+                transportPlayer = p
+            } else if let original = scrubPlayer {
+                p = original
+            } else {
+                p = try AVAudioPlayer(contentsOf: url)
+                scrubPlayer = p
             }
+            transportStartTime = min(max(0, timeline.playhead), max(0, p.duration - 0.01))
+            p.currentTime = transportStartTime
+            p.play()
+            transportPlaying = true
+            playButton.title = "■ Stop"
+            status.stringValue = repaired ? "PLAYING REPAIR — rendered event gain + TYPE TRIM + crossfades" : "PLAYING ORIGINAL"
+            transportTimer?.invalidate()
+            transportTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+                guard let self = self, let player = self.activeTransportPlayer() else { return }
+                self.timeline.followPlayback(to: player.currentTime)
+                self.currentTimeLabel?.stringValue = self.formatTime(player.currentTime)
+                if !player.isPlaying && self.transportPlaying {
+                    self.transportPlaying = false
+                    self.transportTimer?.invalidate()
+                    self.playButton.title = "▶  Play"
+                    self.status.stringValue = "PLAYBACK END"
+                }
+            }
+        } catch {
+            status.stringValue = "REPAIR PREVIEW FAILED — \(error.localizedDescription)"
         }
     }
 
     private func stopTransport() {
-        guard let p = scrubPlayer else { return }
+        guard let p = activeTransportPlayer() else { return }
         let stoppedAt = p.currentTime
         p.pause()
         transportPlaying = false
@@ -1886,12 +1966,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         if stopMode.selectedSegment == 1 {
             p.currentTime = transportStartTime
             timeline.followPlayback(to: transportStartTime)
+            currentTimeLabel?.stringValue = formatTime(transportStartTime)
             status.stringValue = "STOP — returned to start"
         } else {
             timeline.followPlayback(to: stoppedAt)
+            currentTimeLabel?.stringValue = formatTime(stoppedAt)
             status.stringValue = "STOP — locator stays at stop position"
         }
-        playButton.title = "▶ Play event"
+        playButton.title = "▶  Play"
     }
 
     private func scrub(to time: Double, active: Bool) {
@@ -1912,41 +1994,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         stopTimer?.invalidate()
         fadeTimer?.invalidate()
         let e = events[i]
+        let repaired = auditionMode?.selectedSegment != 0
         do {
-            let p = try AVAudioPlayer(contentsOf: url)
+            let rendered = try RGRenderEngine.renderAudition(sourceURL: url, events: events, typeTrims: typeTrims, startTime: e.start, endTime: e.end, repaired: repaired)
+            let p = try AVAudioPlayer(contentsOf: rendered)
             p.delegate = self
             previewPlayer = p
-            let duration = max(0.02, e.end - e.start)
-            let repaired = auditionMode?.selectedSegment != 0
-            let effectiveDB = repaired ? e.gainDB + (typeTrims[e.kind] ?? 0) : 0
-            let fadeIn = repaired ? e.fadeIn : 0
-            let fadeOutValue = repaired ? e.fadeOut : 0
-            let targetVolume = Float(pow(10.0, effectiveDB / 20.0))
-            p.currentTime = e.start
-            p.volume = fadeIn > 0.001 ? 0 : targetVolume
+            p.currentTime = 0
             p.play()
-            if fadeIn > 0.001 { p.setVolume(targetVolume, fadeDuration: fadeIn) }
-            let fadeOut = min(fadeOutValue, duration * 0.48)
-            if fadeOut > 0.001 {
-                fadeTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, duration - fadeOut), repeats: false) { [weak self, weak p] _ in
-                    guard self?.previewPlayer === p else { return }
-                    p?.setVolume(0, fadeDuration: fadeOut)
-                }
-            }
-            stopTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self, weak p] _ in
-                guard self?.previewPlayer === p else { return }
-                p?.stop()
-                self?.playButton.title = "▶ Play event"
-            }
             timeline.playhead = e.start
+            currentTimeLabel?.stringValue = formatTime(e.start)
             playButton.title = "■ Stop"
-            status.stringValue = String(format: "REGION %@ [%@]   %.3f–%.3f s   %.1f dB", repaired ? "REPAIR" : "ORIGINAL", e.kind, e.start, e.end, effectiveDB)
+            let effectiveDB = repaired ? min(0, e.gainDB + (typeTrims[e.kind] ?? 0)) : 0
+            status.stringValue = String(format: "REGION %@ [%@] %.3f–%.3f s  %.1f dB  IN %.0f / OUT %.0f ms", repaired ? "REPAIR" : "ORIGINAL", e.kind, e.start, e.end, effectiveDB, e.fadeIn * 1000, e.fadeOut * 1000)
+            stopTimer = Timer.scheduledTimer(withTimeInterval: max(0.02, e.end - e.start), repeats: false) { [weak self] _ in
+                self?.previewPlayer?.stop()
+                self?.playButton.title = "▶  Play"
+            }
         } catch {
-            status.stringValue = "REGION PLAYBACK FAILED"
+            status.stringValue = "REGION PLAYBACK FAILED — \(error.localizedDescription)"
         }
     }
 
     @objc private func auditionModeChanged() {
+        previewPlayer?.stop()
+        transportPlayer?.stop()
+        transportPlaying = false
+        transportTimer?.invalidate()
         saveCurrentSession()
         status.stringValue = auditionMode.selectedSegment == 0 ? "A/B — ORIGINAL" : "A/B — REPAIR"
         if let i = timeline.selectedIndex { playRegionOnly(i) }
@@ -2004,26 +2078,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
     @objc private func playSelected() {
         guard let url = model.url else { return }
+        if transportPlaying { stopTransport() }
+        stopTimer?.invalidate()
+        fadeTimer?.invalidate()
+        previewPlayer?.stop()
         do {
-            stopTimer?.invalidate()
-            fadeTimer?.invalidate()
-            let p = try AVAudioPlayer(contentsOf: url)
-            p.delegate = self
-            previewPlayer = p
             if let i = timeline.selectedIndex, events.indices.contains(i) {
                 let e = events[i]
                 let pre = max(0, e.start - 0.30)
                 let post = min(model.duration, e.end + 0.40)
-                p.currentTime = pre
+                let repaired = auditionMode?.selectedSegment != 0
+                let rendered = try RGRenderEngine.renderAudition(sourceURL: url, events: events, typeTrims: typeTrims, startTime: pre, endTime: post, repaired: repaired)
+                let p = try AVAudioPlayer(contentsOf: rendered)
+                p.delegate = self
+                previewPlayer = p
+                p.currentTime = 0
                 p.play()
                 playButton.title = "■ Stop"
+                status.stringValue = repaired ? "CONTEXT — REPAIR" : "CONTEXT — ORIGINAL"
                 stopTimer = Timer.scheduledTimer(withTimeInterval: max(0.1, post - pre), repeats: false) { [weak self] _ in self?.finishPreview() }
             } else {
+                let p = try AVAudioPlayer(contentsOf: url)
+                p.delegate = self
+                previewPlayer = p
                 p.currentTime = timeline.playhead
                 p.play()
             }
         } catch {
-            status.stringValue = "PLAYBACK FAILED"
+            status.stringValue = "PLAYBACK FAILED — \(error.localizedDescription)"
         }
     }
 
