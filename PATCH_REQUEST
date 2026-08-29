@@ -1,6 +1,7 @@
-release=0.2.19
-add_phonemes=Ť,Č
-show_event_regions=true
-editable_region_start_end=true
-strong_selected_phoneme_badge=true
+release=0.2.20
+click_badge_plays_region_only=true
+per_event_gain_fader_db=-12,0
+fade_in_ms=0,120
+fade_out_ms=0,120
+preview_applies_gain_and_fades=true
 retry=1
