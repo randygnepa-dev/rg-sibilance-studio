@@ -15,19 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_21.py
+        run: python3 scripts/patch_0_2_22.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.21"' Sources/RGSibilanceStudio.swift
-          grep -F 'onEventFadesChanged' Sources/RGSibilanceStudio.swift
-          grep -F 'visualGain(at:' Sources/RGSibilanceStudio.swift
-          grep -F 'center fader: event gain' Sources/RGSibilanceStudio.swift
-          grep -F 'fade dots: crossfade length' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.22"' Sources/RGSibilanceStudio.swift
+          grep -F 'final class SessionStore' Sources/RGSibilanceStudio.swift
+          grep -F 'SESSION RESTORED — unchanged audio file' Sources/RGSibilanceStudio.swift
+          grep -F 'onCreateEventRegion' Sources/RGSibilanceStudio.swift
+          grep -F '⇧ drag: select new event region' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.21\n' > VERSION
+          printf '0.2.22\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.21 direct waveform gain and fades"
+          git commit -m "Release 0.2.22 session restore and region event creation"
           git push
