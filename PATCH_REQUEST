@@ -1,7 +1,5 @@
-release=0.2.16
-event_type_editing=true
-time_ruler_drag=true
-space_transport=true
-stop_modes=continue,return
-visual_polish=rg_dark
+release=0.2.17
+cmd_r_refresh_latest=true
+force_update_check=true
+force_reload_same_version=true
 retry=1
