@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.21"
+let RGVersion = "0.2.22"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -16,7 +16,7 @@ extension NSColor {
     }
 }
 
-struct SibilanceEvent {
+struct SibilanceEvent: Codable {
     var start: Double
     var end: Double
     var peakTime: Double
@@ -26,6 +26,62 @@ struct SibilanceEvent {
     var gainDB: Double = 0
     var fadeIn: Double = 0.012
     var fadeOut: Double = 0.012
+}
+
+struct FileSession: Codable {
+    var path: String
+    var fileSize: UInt64
+    var modificationTime: Double
+    var duration: Double
+    var sampleRate: Double
+    var events: [SibilanceEvent]
+    var typeTrims: [String: Double]
+}
+
+final class SessionStore {
+    private let fm = FileManager.default
+
+    private var directory: URL {
+        let base = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/RG Sibilance Studio/Sessions", isDirectory: true)
+        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
+    private func stableHash(_ text: String) -> String {
+        var hash: UInt64 = 1469598103934665603
+        for b in text.utf8 { hash = (hash ^ UInt64(b)) &* 1099511628211 }
+        return String(format: "%016llx", hash)
+    }
+
+    private func sessionURL(for url: URL) -> URL {
+        directory.appendingPathComponent(stableHash(url.standardizedFileURL.path) + ".json")
+    }
+
+    private func signature(_ url: URL) -> (UInt64, Double)? {
+        guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber,
+              let date = attrs[.modificationDate] as? Date else { return nil }
+        return (size.uint64Value, date.timeIntervalSince1970)
+    }
+
+    func load(for url: URL, duration: Double, sampleRate: Double) -> FileSession? {
+        guard let sig = signature(url),
+              let data = try? Data(contentsOf: sessionURL(for: url)),
+              let session = try? JSONDecoder().decode(FileSession.self, from: data) else { return nil }
+        guard session.path == url.standardizedFileURL.path,
+              session.fileSize == sig.0,
+              abs(session.modificationTime - sig.1) < 0.001,
+              abs(session.duration - duration) < 0.001,
+              abs(session.sampleRate - sampleRate) < 0.5 else { return nil }
+        return session
+    }
+
+    func save(for url: URL, duration: Double, sampleRate: Double, events: [SibilanceEvent], typeTrims: [String: Double]) {
+        guard let sig = signature(url) else { return }
+        let session = FileSession(path: url.standardizedFileURL.path, fileSize: sig.0, modificationTime: sig.1, duration: duration, sampleRate: sampleRate, events: events, typeTrims: typeTrims)
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        try? data.write(to: sessionURL(for: url), options: .atomic)
+    }
 }
 
 final class AudioModel {
@@ -217,6 +273,7 @@ final class TimelineView: NSView {
     var onPlayEvent: ((Int) -> Void)?
     var onEventGainChanged: ((Int, Double) -> Void)?
     var onEventFadesChanged: ((Int, Double, Double) -> Void)?
+    var onCreateEventRegion: ((Double, Double) -> Void)?
 
     private var zoom = 1.0
     private var viewStart = 0.0
@@ -233,6 +290,9 @@ final class TimelineView: NSView {
     private var gainDragIndex: Int?
     private var fadeDragIndex: Int?
     private var fadeDragSide: Int = 0
+    private var selectingRegion = false
+    private var selectionAnchor: Double?
+    private var selectionCurrent: Double?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -397,6 +457,17 @@ final class TimelineView: NSView {
 
         guard plotRect.contains(p) else { return }
 
+        if event.modifierFlags.contains(.shift) {
+            selectingRegion = true
+            let t = timeForX(p.x)
+            selectionAnchor = t
+            selectionCurrent = t
+            playhead = t
+            highlightedTime = t
+            needsDisplay = true
+            return
+        }
+
         if let i = eventIndexAtBadge(p) {
             selectedIndex = i
             onSelect?(i)
@@ -463,7 +534,13 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if let i = gainDragIndex, events.indices.contains(i) {
+        if selectingRegion {
+            let t = timeForX(min(max(p.x, plotRect.minX), plotRect.maxX))
+            selectionCurrent = t
+            playhead = t
+            highlightedTime = t
+            needsDisplay = true
+        } else if let i = gainDragIndex, events.indices.contains(i) {
             updateGainDrag(i, y: p.y)
         } else if let i = fadeDragIndex, events.indices.contains(i) {
             updateFadeDrag(i, side: fadeDragSide, x: p.x)
@@ -506,6 +583,14 @@ final class TimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if selectingRegion, let a = selectionAnchor, let b = selectionCurrent {
+            let start = min(a, b)
+            let end = max(a, b)
+            selectingRegion = false
+            selectionAnchor = nil
+            selectionCurrent = nil
+            if end - start >= 0.015 { onCreateEventRegion?(start, end) }
+        }
         if scrubbing { onScrub?(playhead, false) }
         scrubbing = false
         panning = false
@@ -622,6 +707,7 @@ final class TimelineView: NSView {
         }
 
         drawWaveform(m)
+        drawSelectionRegion()
         drawEvents(m)
         drawPlayhead()
         drawTimeScale(m)
@@ -676,6 +762,21 @@ final class TimelineView: NSView {
         NSColor(hex: 0x203646).setStroke()
         zero.lineWidth = 0.5
         zero.stroke()
+    }
+
+    private func drawSelectionRegion() {
+        guard let a = selectionAnchor, let b = selectionCurrent else { return }
+        let x1 = xForTime(min(a, b))
+        let x2 = xForTime(max(a, b))
+        let r = NSRect(x: min(x1, x2), y: plotRect.minY, width: max(2, abs(x2 - x1)), height: plotRect.height)
+        NSColor.systemCyan.withAlphaComponent(0.16).setFill()
+        r.fill()
+        NSColor.systemCyan.withAlphaComponent(0.9).setStroke()
+        let border = NSBezierPath(rect: r)
+        border.lineWidth = 1.5
+        border.stroke()
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 10), .foregroundColor: NSColor.white]
+        "NEW EVENT REGION".draw(at: NSPoint(x: r.minX + 6, y: r.maxY - 18), withAttributes: attrs)
     }
 
     private func drawEvents(_ m: AudioModel) {
@@ -836,7 +937,7 @@ final class TimelineView: NSView {
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   center fader: event gain   •   fade dots: crossfade length   •   region edges: START/END   •   Space: play/stop".draw(
+        "Scroll: zoom   •   ⇧ drag: select new event region   •   center fader: gain   •   fade dots: crossfade   •   Space: play/stop".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -1020,6 +1121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private let detector = SibilanceDetector()
     private let progressUI = AnalysisProgressController()
     private let updater = UpdateManager()
+    private let sessionStore = SessionStore()
     private var previewPlayer: AVAudioPlayer?
     private var scrubPlayer: AVAudioPlayer?
     private var stopTimer: Timer?
@@ -1094,6 +1196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onPlayEvent = { [weak self] i in self?.playRegionOnly(i) }
         timeline.onEventGainChanged = { [weak self] i, gain in self?.eventGainChanged(i, gain: gain) }
         timeline.onEventFadesChanged = { [weak self] i, fadeIn, fadeOut in self?.eventFadesChanged(i, fadeIn: fadeIn, fadeOut: fadeOut) }
+        timeline.onCreateEventRegion = { [weak self] start, end in self?.createEventFromSelection(start: start, end: end) }
         root.addSubview(timeline)
 
         fileInfo = label("Drop WAV/AIFF directly into the waveform window", size: 11, color: NSColor(hex: 0x778895))
@@ -1255,9 +1358,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                     self.timeline.playhead = 0
                     self.fileInfo.stringValue = "\(url.lastPathComponent)   •   \(Int(m.sampleRate)) Hz   •   \(m.channels) ch   •   \(String(format: "%.2f", m.duration)) s"
                     self.detectedLabel.stringValue = "Detected: 0 events"
-                    self.eventInfo.stringValue = "Audio loaded — analyzing automatically…"
-                    self.status.stringValue = "AUDIO LOADED — starting automatic analysis…"
-                    self.analyzeAudio()
+                    if let session = self.sessionStore.load(for: url, duration: m.duration, sampleRate: m.sampleRate) {
+                        self.events = session.events
+                        self.typeTrims = session.typeTrims
+                        self.timeline.events = session.events
+                        self.timeline.selectedIndex = session.events.isEmpty ? nil : 0
+                        self.detectedLabel.stringValue = "Restored: \(session.events.count) events"
+                        self.eventInfo.stringValue = session.events.isEmpty ? "Saved session restored" : "Saved session restored — last stage"
+                        if !session.events.isEmpty { self.selectEvent(0) }
+                        self.status.stringValue = "SESSION RESTORED — unchanged audio file"
+                    } else {
+                        self.eventInfo.stringValue = "Audio loaded — analyzing automatically…"
+                        self.status.stringValue = "AUDIO LOADED — starting automatic analysis…"
+                        self.analyzeAudio()
+                    }
                 }
             } catch {
                 DispatchQueue.main.async { self.status.stringValue = "LOAD FAILED — \(error.localizedDescription)" }
@@ -1288,9 +1402,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                 self.progressUI.close(parent: self.window)
                 self.analyzeButton.isEnabled = true
                 self.sensitivitySlider.isEnabled = true
+                self.saveCurrentSession()
                 self.status.stringValue = found.isEmpty ? "ANALYSIS COMPLETE — no events" : "ANALYSIS COMPLETE"
             }
         }
+    }
+
+    private func saveCurrentSession() {
+        guard let url = model.url else { return }
+        sessionStore.save(for: url, duration: model.duration, sampleRate: model.sampleRate, events: events, typeTrims: typeTrims)
+    }
+
+    private func createEventFromSelection(start: Double, end: Double) {
+        guard end - start >= 0.015 else { return }
+        let menu = NSMenu()
+        for kind in ["S", "Š", "Z", "C", "Č", "T", "Ť", "D", "K", "P", "B", "F", "CH", "OTHER"] {
+            let item = NSMenuItem(title: kind, action: #selector(createSelectedRegionEvent(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["start": start, "end": end, "kind": kind] as [String : Any]
+            menu.addItem(item)
+        }
+        let p = NSEvent.mouseLocation
+        if let screen = NSScreen.main {
+            let local = NSPoint(x: p.x - screen.frame.minX, y: p.y - screen.frame.minY)
+            menu.popUp(positioning: nil, at: local, in: nil)
+        } else {
+            menu.popUp(positioning: nil, at: NSPoint(x: 200, y: 200), in: nil)
+        }
+    }
+
+    @objc private func createSelectedRegionEvent(_ sender: NSMenuItem) {
+        guard let d = sender.representedObject as? [String: Any],
+              let start = d["start"] as? Double, let end = d["end"] as? Double, let kind = d["kind"] as? String else { return }
+        let e = SibilanceEvent(start: start, end: end, peakTime: (start + end) * 0.5, score: 1, kind: kind, userLabel: "TARGET")
+        events.append(e)
+        events.sort { $0.peakTime < $1.peakTime }
+        timeline.events = events
+        detectedLabel.stringValue = "Detected: \(events.count) events"
+        if let i = events.firstIndex(where: { abs($0.start - start) < 0.000001 && abs($0.end - end) < 0.000001 && $0.kind == kind }) {
+            selectEvent(i)
+            timeline.playhead = events[i].start
+        }
+        saveCurrentSession()
+        status.stringValue = "NEW [\(kind)] EVENT — \(String(format: "%.3f", start))–\(String(format: "%.3f", end)) s"
     }
 
     @objc private func sensitivityChanged() {
@@ -1323,6 +1477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         events[i].peakTime = (start + end) * 0.5
         timeline.events = events
         selectEvent(i)
+        saveCurrentSession()
         status.stringValue = String(format: "EVENT #%d REGION → %.3f–%.3f s", i + 1, start, end)
     }
 
@@ -1335,6 +1490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutSlider.doubleValue = events[i].fadeOut * 1000
         timeline.events = events
         selectEvent(i)
+        saveCurrentSession()
         status.stringValue = String(format: "EVENT #%d CROSSFADES — IN %.0f ms / OUT %.0f ms", i + 1, events[i].fadeIn * 1000, events[i].fadeOut * 1000)
     }
 
@@ -1342,6 +1498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         guard events.indices.contains(i) else { return }
         events[i].gainDB = min(0, max(-18, gain))
         selectEvent(i)
+        saveCurrentSession()
         status.stringValue = String(format: "EVENT #%d GAIN %.1f dB", i + 1, events[i].gainDB)
     }
 
@@ -1355,6 +1512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutValue.stringValue = String(format: "%.0f ms", fadeOut * 1000)
         timeline.events = events
         selectEvent(i)
+        saveCurrentSession()
         status.stringValue = String(format: "EVENT #%d CROSSFADES — IN %.0f ms / OUT %.0f ms", i + 1, fadeIn * 1000, fadeOut * 1000)
     }
 
@@ -1366,6 +1524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         typeTrimValue.stringValue = String(format: "%.1f dB", value)
         selectEvent(i)
         let count = events.filter { $0.kind == kind }.count
+        saveCurrentSession()
         status.stringValue = String(format: "%@ TYPE TRIM %.1f dB — %d events", kind, value, count)
     }
 
@@ -1374,6 +1533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         events[i].kind = title
         timeline.events = events
         selectEvent(i)
+        saveCurrentSession()
         status.stringValue = "EVENT #\(i + 1) TYPE → \(title)"
     }
 
@@ -1382,6 +1542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         events[i].userLabel = value
         timeline.events = events
         selectEvent(i)
+        saveCurrentSession()
         status.stringValue = "EVENT #\(i + 1) MARKED \(value)"
     }
 
@@ -1404,6 +1565,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.playhead = clamped
         detectedLabel.stringValue = "Detected: \(events.count) events"
         if let i = events.firstIndex(where: { abs($0.peakTime - clamped) < 0.0001 }) { selectEvent(i) }
+        saveCurrentSession()
         status.stringValue = "MANUAL SIBILANCE ADDED"
     }
 
@@ -1425,6 +1587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             selectEvent(next)
             timeline.playhead = events[next].peakTime
         }
+        saveCurrentSession()
         status.stringValue = "SIBILANCE REMOVED"
     }
 
