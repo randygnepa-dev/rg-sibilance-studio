@@ -1,8 +1,8 @@
-release=0.4.1
-protools_waveform_ui=true
+release=0.4.2
+visual_cleanup=true
+compact_events=true
+no_event_overlap=true
+protools_clip_gain=true
+curved_fades=true
 waveform_only=true
 fixed_window=true
-clip_gain_envelope=true
-fade_handles=true
-interactive_dewhistle_eq=true
-reference_workflow=true
