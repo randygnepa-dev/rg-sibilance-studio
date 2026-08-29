@@ -1341,7 +1341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private let progressUI = AnalysisProgressController()
     private let updater = UpdateManager()
     private let sessionStore = SessionStore()
-    private let learningStore = RGLearningStore()
+    private let learningStore = RGExemplarStore()
     private var previewPlayer: AVAudioPlayer?
     private var scrubPlayer: AVAudioPlayer?
     private var transportPlayer: AVAudioPlayer?

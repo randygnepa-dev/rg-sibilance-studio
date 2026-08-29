@@ -186,7 +186,7 @@ struct RGExemplar: Codable {
     var createdAt: Double
 }
 
-final class RGLearningStore {
+final class RGExemplarStore {
     private var exemplars: [RGExemplar] = []
     private let url: URL
 
