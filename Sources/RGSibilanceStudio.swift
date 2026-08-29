@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.22"
+let RGVersion = "0.2.23"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -36,6 +36,10 @@ struct FileSession: Codable {
     var sampleRate: Double
     var events: [SibilanceEvent]
     var typeTrims: [String: Double]
+    var sensitivity: Double?
+    var playhead: Double?
+    var selectedIndex: Int?
+    var auditionMode: Int?
 }
 
 final class SessionStore {
@@ -76,9 +80,9 @@ final class SessionStore {
         return session
     }
 
-    func save(for url: URL, duration: Double, sampleRate: Double, events: [SibilanceEvent], typeTrims: [String: Double]) {
+    func save(for url: URL, duration: Double, sampleRate: Double, events: [SibilanceEvent], typeTrims: [String: Double], sensitivity: Double, playhead: Double, selectedIndex: Int?, auditionMode: Int) {
         guard let sig = signature(url) else { return }
-        let session = FileSession(path: url.standardizedFileURL.path, fileSize: sig.0, modificationTime: sig.1, duration: duration, sampleRate: sampleRate, events: events, typeTrims: typeTrims)
+        let session = FileSession(path: url.standardizedFileURL.path, fileSize: sig.0, modificationTime: sig.1, duration: duration, sampleRate: sampleRate, events: events, typeTrims: typeTrims, sensitivity: sensitivity, playhead: playhead, selectedIndex: selectedIndex, auditionMode: auditionMode)
         guard let data = try? JSONEncoder().encode(session) else { return }
         try? data.write(to: sessionURL(for: url), options: .atomic)
     }
@@ -94,6 +98,7 @@ final class AudioModel {
     var rms: Float = 0
     var overviewMin: [Float] = []
     var overviewMax: [Float] = []
+    var spectralBands = RGSpectralBands(hopSamples: 512, sampleRate: 48000, values: [])
 
     func load(_ url: URL) throws {
         let file = try AVAudioFile(forReading: url)
@@ -129,7 +134,8 @@ final class AudioModel {
         }
         peak = p
         rms = samples.isEmpty ? 0 : Float(sqrt(energy / Double(samples.count)))
-        buildOverview(binCount: 32768)
+        buildOverview(binCount: 131072)
+        spectralBands = RGSpectralAnalyzer.makeBands(samples: samples, sampleRate: sampleRate, hopSamples: 512)
     }
 
     private func buildOverview(binCount: Int) {
@@ -305,11 +311,11 @@ final class TimelineView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     private var plotRect: NSRect {
-        NSRect(x: 54, y: 34, width: max(120, bounds.width - 76), height: max(90, bounds.height - 58))
+        NSRect(x: 58, y: 48, width: max(120, bounds.width - 82), height: max(90, bounds.height - 72))
     }
 
     private var rulerRect: NSRect {
-        NSRect(x: plotRect.minX, y: 0, width: plotRect.width, height: 32)
+        NSRect(x: plotRect.minX, y: 0, width: plotRect.width, height: 44)
     }
 
     private var visibleDuration: Double {
@@ -375,7 +381,7 @@ final class TimelineView: NSView {
         if abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) {
             let anchor = timeForX(p.x)
             let factor = exp(Double(event.scrollingDeltaY) * 0.10)
-            zoom = min(160, max(1, zoom * factor))
+            zoom = min(640, max(1, zoom * factor))
             let fraction = Double((p.x - plotRect.minX) / plotRect.width)
             viewStart = anchor - fraction * visibleDuration
         } else {
@@ -617,12 +623,12 @@ final class TimelineView: NSView {
     private func gainFaderRect(for i: Int) -> NSRect {
         guard events.indices.contains(i) else { return .zero }
         let centerX = xForTime(events[i].peakTime)
-        return NSRect(x: centerX - 14, y: plotRect.midY - 76, width: 28, height: 152)
+        return NSRect(x: centerX - 28, y: plotRect.midY - 54, width: 56, height: 108)
     }
 
     private func updateGainDrag(_ i: Int, y: CGFloat) {
         guard events.indices.contains(i) else { return }
-        let range: CGFloat = 68
+        let range: CGFloat = 48
         let clampedY = min(plotRect.midY + range, max(plotRect.midY - range, y))
         let normalized = Double((clampedY - (plotRect.midY - range)) / (range * 2))
         let value = -18.0 + normalized * 18.0
@@ -706,6 +712,7 @@ final class TimelineView: NSView {
             return
         }
 
+        drawSpectralOverlay(m)
         drawWaveform(m)
         drawSelectionRegion()
         drawEvents(m)
@@ -723,43 +730,89 @@ final class TimelineView: NSView {
         text.draw(at: NSPoint(x: bounds.midX - s.width / 2, y: y), withAttributes: attrs)
     }
 
+    private func drawSpectralOverlay(_ m: AudioModel) {
+        let spec = m.spectralBands
+        guard !spec.values.isEmpty else { return }
+        let labels = ["2–4k", "4–7k", "7–10k", "10–14k", "14–20k"]
+        let laneH = plotRect.height / 5.0
+        let columns = max(160, Int(plotRect.width / 2))
+        for c in 0..<columns {
+            let t = viewStart + Double(c) / Double(max(1, columns - 1)) * visibleDuration
+            let frame = min(spec.values.count - 1, max(0, Int(t * spec.sampleRate / Double(spec.hopSamples))))
+            let x0 = plotRect.minX + CGFloat(c) / CGFloat(columns) * plotRect.width
+            let x1 = plotRect.minX + CGFloat(c + 1) / CGFloat(columns) * plotRect.width
+            for b in 0..<5 {
+                let v = CGFloat(spec.values[frame][b])
+                if v < 0.08 { continue }
+                let y = plotRect.minY + CGFloat(b) * laneH
+                let color: NSColor
+                switch b {
+                case 0: color = NSColor.systemBlue
+                case 1: color = NSColor.systemCyan
+                case 2: color = NSColor.systemTeal
+                case 3: color = NSColor.systemPurple
+                default: color = NSColor.systemPink
+                }
+                color.withAlphaComponent(0.025 + v * 0.19).setFill()
+                NSRect(x: x0, y: y, width: max(1, x1 - x0 + 0.5), height: laneH).fill()
+            }
+        }
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.38)]
+        for b in 0..<5 {
+            labels[b].draw(at: NSPoint(x: 7, y: plotRect.minY + CGFloat(b) * laneH + laneH * 0.5 - 5), withAttributes: attrs)
+        }
+    }
+
     private func drawWaveform(_ m: AudioModel) {
-        guard !m.overviewMin.isEmpty else { return }
-        let nBins = m.overviewMin.count
-        let total = max(0.0001, m.duration)
-        let startBin = max(0, min(nBins - 1, Int(viewStart / total * Double(nBins))))
-        let endBin = max(startBin + 1, min(nBins, Int(viewEnd / total * Double(nBins)) + 1))
-        let visibleBins = max(1, endBin - startBin)
-        let columns = max(140, Int(plotRect.width))
-        let binsPerColumn = Double(visibleBins) / Double(columns)
+        guard !m.samples.isEmpty else { return }
+        let columns = max(180, Int(plotRect.width * 1.15))
+        let startSample = max(0, min(m.samples.count - 1, Int(viewStart * m.sampleRate)))
+        let endSample = max(startSample + 1, min(m.samples.count, Int(viewEnd * m.sampleRate) + 1))
+        let visibleSamples = max(1, endSample - startSample)
+        let spp = Double(visibleSamples) / Double(columns)
         let path = NSBezierPath()
 
-        for column in 0..<columns {
-            let b0 = min(endBin - 1, startBin + Int(Double(column) * binsPerColumn))
-            let b1 = min(endBin, max(b0 + 1, startBin + Int(Double(column + 1) * binsPerColumn)))
-            var mn = m.overviewMin[b0]
-            var mx = m.overviewMax[b0]
-            if b0 + 1 < b1 {
-                for b in (b0 + 1)..<b1 {
-                    mn = min(mn, m.overviewMin[b])
-                    mx = max(mx, m.overviewMax[b])
+        if spp <= 2048 {
+            for column in 0..<columns {
+                let s0 = min(endSample - 1, startSample + Int(Double(column) * spp))
+                let s1 = min(endSample, max(s0 + 1, startSample + Int(Double(column + 1) * spp)))
+                var mn = m.samples[s0]
+                var mx = m.samples[s0]
+                if s1 > s0 + 1 {
+                    for i in (s0 + 1)..<s1 { mn = min(mn, m.samples[i]); mx = max(mx, m.samples[i]) }
                 }
+                let x = plotRect.minX + CGFloat(column) / CGFloat(max(1, columns - 1)) * plotRect.width
+                let time = Double(s0) / m.sampleRate
+                let gain = CGFloat(visualGain(at: time))
+                path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * gain * plotRect.height * 0.47 * fixedVerticalScale))
+                path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * gain * plotRect.height * 0.47 * fixedVerticalScale))
             }
-            let x = plotRect.minX + CGFloat(column) / CGFloat(max(1, columns - 1)) * plotRect.width
-            let time = viewStart + Double(column) / Double(max(1, columns - 1)) * visibleDuration
-            let gain = CGFloat(visualGain(at: time))
-            path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * gain * plotRect.height * 0.48 * fixedVerticalScale))
-            path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * gain * plotRect.height * 0.48 * fixedVerticalScale))
+        } else {
+            let nBins = m.overviewMin.count
+            let total = max(0.0001, m.duration)
+            let startBin = max(0, min(nBins - 1, Int(viewStart / total * Double(nBins))))
+            let endBin = max(startBin + 1, min(nBins, Int(viewEnd / total * Double(nBins)) + 1))
+            let binsPerColumn = Double(max(1, endBin - startBin)) / Double(columns)
+            for column in 0..<columns {
+                let b0 = min(endBin - 1, startBin + Int(Double(column) * binsPerColumn))
+                let b1 = min(endBin, max(b0 + 1, startBin + Int(Double(column + 1) * binsPerColumn)))
+                var mn = m.overviewMin[b0]
+                var mx = m.overviewMax[b0]
+                if b1 > b0 + 1 { for b in (b0 + 1)..<b1 { mn = min(mn, m.overviewMin[b]); mx = max(mx, m.overviewMax[b]) } }
+                let x = plotRect.minX + CGFloat(column) / CGFloat(max(1, columns - 1)) * plotRect.width
+                let time = viewStart + Double(column) / Double(max(1, columns - 1)) * visibleDuration
+                let gain = CGFloat(visualGain(at: time))
+                path.move(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mn) * gain * plotRect.height * 0.47 * fixedVerticalScale))
+                path.line(to: NSPoint(x: x, y: plotRect.midY + CGFloat(mx) * gain * plotRect.height * 0.47 * fixedVerticalScale))
+            }
         }
-
-        NSColor(hex: 0x2F95FF).setStroke()
-        path.lineWidth = 1
+        NSColor(hex: 0x38A9FF).setStroke()
+        path.lineWidth = spp < 80 ? 1.15 : 0.9
         path.stroke()
-
         let zero = NSBezierPath()
         zero.move(to: NSPoint(x: plotRect.minX, y: plotRect.midY))
         zero.line(to: NSPoint(x: plotRect.maxX, y: plotRect.midY))
-        NSColor(hex: 0x203646).setStroke()
+        NSColor.white.withAlphaComponent(0.10).setStroke()
         zero.lineWidth = 0.5
         zero.stroke()
     }
@@ -855,38 +908,40 @@ final class TimelineView: NSView {
             if selected {
                 let fader = gainFaderRect(for: i)
                 let centerX = fader.midX
-                let range: CGFloat = 68
+                let range: CGFloat = 48
                 let rail = NSBezierPath()
                 rail.move(to: NSPoint(x: centerX, y: plotRect.midY - range))
                 rail.line(to: NSPoint(x: centerX, y: plotRect.midY + range))
                 NSColor.white.withAlphaComponent(0.24).setStroke()
-                rail.lineWidth = 2
+                rail.lineWidth = 1
                 rail.stroke()
                 let norm = CGFloat((min(0, max(-18, e.gainDB)) + 18) / 18)
                 let knobY = plotRect.midY - range + norm * range * 2
-                let knob = NSBezierPath(roundedRect: NSRect(x: centerX - 9, y: knobY - 6, width: 18, height: 12), xRadius: 5, yRadius: 5)
+                let knob = NSBezierPath(roundedRect: NSRect(x: centerX - 18, y: knobY - 9, width: 36, height: 18), xRadius: 9, yRadius: 9)
                 NSColor.white.setFill()
                 knob.fill()
                 let gattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold), .foregroundColor: NSColor.white.withAlphaComponent(0.9)]
-                String(format: "%.1f", e.gainDB).draw(at: NSPoint(x: centerX + 13, y: knobY - 5), withAttributes: gattrs)
+                let gainText = String(format: "%.1f dB", e.gainDB)
+                let gainSize = gainText.size(withAttributes: gattrs)
+                gainText.draw(at: NSPoint(x: centerX - gainSize.width / 2, y: knobY - 4), withAttributes: gattrs)
 
                 let inX = xForTime(min(e.end, e.start + e.fadeIn))
                 let outX = xForTime(max(e.start, e.end - e.fadeOut))
-                let fadeTop = plotRect.midY + 42
-                let fadeBottom = plotRect.midY - 42
+                let fadeTop = plotRect.midY + 34
+                let fadeBottom = plotRect.midY - 34
                 let fadeInPath = NSBezierPath()
                 fadeInPath.move(to: NSPoint(x: startX, y: fadeTop))
                 fadeInPath.line(to: NSPoint(x: inX, y: fadeBottom))
                 color.withAlphaComponent(0.9).setStroke()
-                fadeInPath.lineWidth = 2
+                fadeInPath.lineWidth = 1.4
                 fadeInPath.stroke()
                 let fadeOutPath = NSBezierPath()
                 fadeOutPath.move(to: NSPoint(x: outX, y: fadeBottom))
                 fadeOutPath.line(to: NSPoint(x: endX, y: fadeTop))
-                fadeOutPath.lineWidth = 2
+                fadeOutPath.lineWidth = 1.4
                 fadeOutPath.stroke()
                 for x in [inX, outX] {
-                    let h = NSBezierPath(ovalIn: NSRect(x: x - 6, y: plotRect.midY - 6, width: 12, height: 12))
+                    let h = NSBezierPath(roundedRect: NSRect(x: x - 5, y: plotRect.midY - 5, width: 10, height: 10), xRadius: 3, yRadius: 3)
                     color.setFill()
                     h.fill()
                     NSColor.white.setStroke()
@@ -912,32 +967,39 @@ final class TimelineView: NSView {
     }
 
     private func drawTimeScale(_ m: AudioModel) {
-        NSColor(hex: 0x0A141D).setFill()
+        NSColor(hex: 0x08131D).setFill()
         rulerRect.fill()
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular), .foregroundColor: NSColor(hex: 0x718493)]
-        for i in 0...5 {
-            let t = viewStart + visibleDuration * Double(i) / 5
+        let major: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor(hex: 0xA3B2BD)]
+        let tick = NSBezierPath()
+        for i in 0...8 {
+            let t = viewStart + visibleDuration * Double(i) / 8.0
+            let x = plotRect.minX + plotRect.width * CGFloat(i) / 8.0
+            tick.move(to: NSPoint(x: x, y: 31))
+            tick.line(to: NSPoint(x: x, y: 42))
             let min = Int(t) / 60
             let sec = Int(t) % 60
-            let text = String(format: "%d:%02d", min, sec)
-            let x = plotRect.minX + plotRect.width * CGFloat(i) / 5
-            text.draw(at: NSPoint(x: x - 12, y: 9), withAttributes: attrs)
+            let ms = Int((t - floor(t)) * 1000)
+            let text = visibleDuration < 12 ? String(format: "%d:%02d.%03d", min, sec, ms) : String(format: "%d:%02d", min, sec)
+            text.draw(at: NSPoint(x: x - 22, y: 8), withAttributes: major)
         }
+        NSColor.white.withAlphaComponent(0.18).setStroke()
+        tick.lineWidth = 1
+        tick.stroke()
         if let t = highlightedTime, t >= viewStart && t <= viewEnd {
             let x = xForTime(t)
-            let text = String(format: "%d:%02d.%03d", Int(t) / 60, Int(t) % 60, Int((t - floor(t)) * 1000))
-            let a: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white]
+            let text = String(format: "%02d:%02d.%03d", Int(t) / 60, Int(t) % 60, Int((t - floor(t)) * 1000))
+            let a: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .bold), .foregroundColor: NSColor.white]
             let size = text.size(withAttributes: a)
-            let box = NSRect(x: min(max(plotRect.minX, x - size.width / 2 - 7), plotRect.maxX - size.width - 14), y: 4, width: size.width + 14, height: 20)
-            NSColor(hex: 0x176BC1).setFill()
-            NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
-            text.draw(at: NSPoint(x: box.minX + 7, y: box.minY + 4), withAttributes: a)
+            let box = NSRect(x: min(max(plotRect.minX, x - size.width / 2 - 10), plotRect.maxX - size.width - 20), y: 5, width: size.width + 20, height: 28)
+            NSColor(hex: 0x1577D2).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 7, yRadius: 7).fill()
+            text.draw(at: NSPoint(x: box.minX + 10, y: box.minY + 6), withAttributes: a)
         }
     }
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   ⇧ drag: select new event region   •   center fader: gain   •   fade dots: crossfade   •   Space: play/stop".draw(
+        "Scroll: zoom   •   ⇧ drag: new event   •   center handle: gain   •   edge diamonds: fades   •   Space: play/stop".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -1115,6 +1177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var fadeOutSlider: NSSlider!
     private var fadeInValue: NSTextField!
     private var fadeOutValue: NSTextField!
+    private var exportButton: NSButton!
+    private var autoRepairButton: NSButton!
+    private var applySimilarButton: NSButton!
+    private var auditionMode: NSSegmentedControl!
 
     private var model = AudioModel()
     private var events: [SibilanceEvent] = []
@@ -1180,11 +1246,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         root.addSubview(subtitle)
 
         analyzeButton = button("Analyze", action: #selector(analyzeAudio))
-        analyzeButton.frame = NSRect(x: w - 323, y: h - 72, width: 125, height: 33)
+        analyzeButton.frame = NSRect(x: w - 430, y: h - 72, width: 112, height: 33)
         root.addSubview(analyzeButton)
         let open = button("Open WAV", action: #selector(openWav))
-        open.frame = NSRect(x: w - 184, y: h - 72, width: 125, height: 33)
+        open.frame = NSRect(x: w - 309, y: h - 72, width: 112, height: 33)
         root.addSubview(open)
+        exportButton = button("Export RG-SIB", action: #selector(exportAudio))
+        exportButton.frame = NSRect(x: w - 188, y: h - 72, width: 129, height: 33)
+        exportButton.isEnabled = false
+        root.addSubview(exportButton)
 
         timeline = TimelineView(frame: NSRect(x: 34, y: h - 536, width: w - 68, height: 410))
         timeline.onAudioDrop = { [weak self] url in self?.loadAudio(url) }
@@ -1275,9 +1345,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutValue.frame = NSRect(x: pw - 55, y: panelH - 178, width: 42, height: 18)
         p2.addSubview(fadeOutValue)
 
-        let repairNote = label("Click phoneme badge: play region only   •   mini fader: event gain", size: 10, color: NSColor(hex: 0x667783))
-        repairNote.frame = NSRect(x: 15, y: 18, width: pw - 30, height: 18)
-        p2.addSubview(repairNote)
+        autoRepairButton = button("AUTO SAFE", action: #selector(autoRepairSelected))
+        autoRepairButton.frame = NSRect(x: 15, y: 16, width: 105, height: 29)
+        autoRepairButton.isEnabled = false
+        p2.addSubview(autoRepairButton)
+        applySimilarButton = button("APPLY SIMILAR", action: #selector(applySimilar))
+        applySimilarButton.frame = NSRect(x: 126, y: 16, width: 122, height: 29)
+        applySimilarButton.isEnabled = false
+        p2.addSubview(applySimilarButton)
 
         addTitle("PREVIEW", to: p3, y: panelH - 30)
         playButton = button("▶ Play event", action: #selector(playSelected))
@@ -1293,6 +1368,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         stopMode.selectedSegment = 0
         stopMode.frame = NSRect(x: 92, y: panelH - 117, width: 174, height: 27)
         p3.addSubview(stopMode)
+        auditionMode = NSSegmentedControl(labels: ["ORIGINAL", "REPAIR"], trackingMode: .selectOne, target: self, action: #selector(auditionModeChanged))
+        auditionMode.selectedSegment = 1
+        auditionMode.frame = NSRect(x: 15, y: 53, width: 205, height: 27)
+        p3.addSubview(auditionMode)
         let prev = button("← Previous", action: #selector(previousEvent)); prev.frame = NSRect(x: 15, y: 18, width: 105, height: 29)
         let next = button("Next →", action: #selector(nextEvent)); next.frame = NSRect(x: 126, y: 18, width: 95, height: 29)
         p3.addSubview(prev); p3.addSubview(next)
@@ -1362,13 +1441,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                         self.events = session.events
                         self.typeTrims = session.typeTrims
                         self.timeline.events = session.events
-                        self.timeline.selectedIndex = session.events.isEmpty ? nil : 0
+                        let restoredIndex = min(max(0, session.selectedIndex ?? 0), max(0, session.events.count - 1))
+                        self.timeline.selectedIndex = session.events.isEmpty ? nil : restoredIndex
+                        self.timeline.playhead = min(m.duration, max(0, session.playhead ?? 0))
+                        self.sensitivitySlider.doubleValue = min(1, max(0, session.sensitivity ?? self.sensitivitySlider.doubleValue))
+                        self.auditionMode.selectedSegment = min(1, max(0, session.auditionMode ?? 1))
+                        self.exportButton.isEnabled = true
                         self.detectedLabel.stringValue = "Restored: \(session.events.count) events"
                         self.eventInfo.stringValue = session.events.isEmpty ? "Saved session restored" : "Saved session restored — last stage"
-                        if !session.events.isEmpty { self.selectEvent(0) }
-                        self.status.stringValue = "SESSION RESTORED — unchanged audio file"
+                        if !session.events.isEmpty { self.selectEvent(restoredIndex) }
+                        self.status.stringValue = "SESSION RESTORED — LAST EDITED STAGE"
                     } else {
                         self.eventInfo.stringValue = "Audio loaded — analyzing automatically…"
+                        self.exportButton.isEnabled = true
                         self.status.stringValue = "AUDIO LOADED — starting automatic analysis…"
                         self.analyzeAudio()
                     }
@@ -1410,7 +1495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
 
     private func saveCurrentSession() {
         guard let url = model.url else { return }
-        sessionStore.save(for: url, duration: model.duration, sampleRate: model.sampleRate, events: events, typeTrims: typeTrims)
+        sessionStore.save(for: url, duration: model.duration, sampleRate: model.sampleRate, events: events, typeTrims: typeTrims, sensitivity: sensitivitySlider.doubleValue, playhead: timeline.playhead, selectedIndex: timeline.selectedIndex, auditionMode: auditionMode?.selectedSegment ?? 1)
     }
 
     private func createEventFromSelection(start: Double, end: Double) {
@@ -1448,6 +1533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     }
 
     @objc private func sensitivityChanged() {
+        saveCurrentSession()
         status.stringValue = "Sensitivity \(Int(sensitivitySlider.doubleValue * 100))% — press Analyze"
     }
 
@@ -1467,7 +1553,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutSlider.doubleValue = e.fadeOut * 1000
         fadeInValue.stringValue = String(format: "%.0f ms", e.fadeIn * 1000)
         fadeOutValue.stringValue = String(format: "%.0f ms", e.fadeOut * 1000)
-        eventInfo.stringValue = String(format: "#%03d   [%@]   START %.3f s   END %.3f s   LEN %.0f ms   GAIN %.1f dB   IN %.0f ms   OUT %.0f ms   %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel)
+        autoRepairButton.isEnabled = true
+        applySimilarButton.isEnabled = true
+        eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, RGRepairAdvisor.qualityText(for: e))
     }
 
     private func eventBoundsChanged(_ i: Int, start: Double, end: Double) {
@@ -1688,12 +1776,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             p.delegate = self
             previewPlayer = p
             let duration = max(0.02, e.end - e.start)
-            let targetVolume = Float(pow(10.0, e.gainDB / 20.0))
+            let repaired = auditionMode?.selectedSegment != 0
+            let effectiveDB = repaired ? e.gainDB + (typeTrims[e.kind] ?? 0) : 0
+            let fadeIn = repaired ? e.fadeIn : 0
+            let fadeOutValue = repaired ? e.fadeOut : 0
+            let targetVolume = Float(pow(10.0, effectiveDB / 20.0))
             p.currentTime = e.start
-            p.volume = e.fadeIn > 0.001 ? 0 : targetVolume
+            p.volume = fadeIn > 0.001 ? 0 : targetVolume
             p.play()
-            if e.fadeIn > 0.001 { p.setVolume(targetVolume, fadeDuration: e.fadeIn) }
-            let fadeOut = min(e.fadeOut, duration * 0.48)
+            if fadeIn > 0.001 { p.setVolume(targetVolume, fadeDuration: fadeIn) }
+            let fadeOut = min(fadeOutValue, duration * 0.48)
             if fadeOut > 0.001 {
                 fadeTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, duration - fadeOut), repeats: false) { [weak self, weak p] _ in
                     guard self?.previewPlayer === p else { return }
@@ -1707,9 +1799,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             }
             timeline.playhead = e.start
             playButton.title = "■ Stop"
-            status.stringValue = String(format: "REGION ONLY [%@]   %.3f–%.3f s   %.1f dB", e.kind, e.start, e.end, e.gainDB)
+            status.stringValue = String(format: "REGION %@ [%@]   %.3f–%.3f s   %.1f dB", repaired ? "REPAIR" : "ORIGINAL", e.kind, e.start, e.end, effectiveDB)
         } catch {
             status.stringValue = "REGION PLAYBACK FAILED"
+        }
+    }
+
+    @objc private func auditionModeChanged() {
+        saveCurrentSession()
+        status.stringValue = auditionMode.selectedSegment == 0 ? "A/B — ORIGINAL" : "A/B — REPAIR"
+        if let i = timeline.selectedIndex { playRegionOnly(i) }
+    }
+
+    @objc private func autoRepairSelected() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        let length = max(0.015, events[i].end - events[i].start)
+        events[i].gainDB = RGRepairAdvisor.recommendedGain(for: events[i])
+        events[i].fadeIn = min(0.018, length * 0.22)
+        events[i].fadeOut = min(0.018, length * 0.22)
+        timeline.events = events
+        selectEvent(i)
+        saveCurrentSession()
+        status.stringValue = String(format: "AUTO SAFE — [%@] %.1f dB", events[i].kind, events[i].gainDB)
+        playRegionOnly(i)
+    }
+
+    @objc private func applySimilar() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        let source = events[i]
+        var changed = 0
+        for j in events.indices where j != i && events[j].kind == source.kind && events[j].userLabel != "GOOD" {
+            events[j].gainDB = source.gainDB
+            events[j].fadeIn = min(source.fadeIn, max(0, (events[j].end - events[j].start) * 0.48))
+            events[j].fadeOut = min(source.fadeOut, max(0, (events[j].end - events[j].start) * 0.48))
+            changed += 1
+        }
+        timeline.events = events
+        saveCurrentSession()
+        status.stringValue = "APPLY SIMILAR — \(changed) [\(source.kind)] events updated"
+    }
+
+    @objc private func exportAudio() {
+        guard let url = model.url else { return }
+        exportButton.isEnabled = false
+        status.stringValue = "EXPORTING RG-SIB…"
+        let snapshot = events
+        let trims = typeTrims
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let out = try RGRenderEngine.export(sourceURL: url, events: snapshot, typeTrims: trims)
+                DispatchQueue.main.async {
+                    self?.exportButton.isEnabled = true
+                    self?.status.stringValue = "EXPORT COMPLETE — \(out.lastPathComponent)"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.exportButton.isEnabled = true
+                    self?.status.stringValue = "EXPORT FAILED — \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -1755,6 +1903,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        saveCurrentSession()
         if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
     }
 
