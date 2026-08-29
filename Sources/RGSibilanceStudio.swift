@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.4.2"
+let RGVersion = "0.4.3"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -309,6 +309,8 @@ final class TimelineView: NSView {
     var onEventGainChanged: ((Int, Double) -> Void)?
     var onEventFadesChanged: ((Int, Double, Double) -> Void)?
     var onCreateEventRegion: ((Double, Double) -> Void)?
+    var onLoopRangeChanged: ((Double?, Double?) -> Void)?
+    var loopRange: (Double, Double)? { didSet { needsDisplay = true } }
     var displayMode: Int = 0 { didSet { needsDisplay = true } }
 
     private var zoom = 1.0
@@ -329,6 +331,8 @@ final class TimelineView: NSView {
     private var selectingRegion = false
     private var selectionAnchor: Double?
     private var selectionCurrent: Double?
+    private var loopDragging = false
+    private var loopAnchor: Double?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -482,9 +486,10 @@ final class TimelineView: NSView {
         window?.makeFirstResponder(self)
 
         if rulerRect.contains(p) {
-            rulerDragging = true
-            lastDragX = p.x
-            let t = timeForX(p.x)
+            loopDragging = true
+            loopAnchor = timeForX(p.x)
+            let t = loopAnchor!
+            loopRange = (t, t)
             playhead = t
             highlightedTime = t
             needsDisplay = true
@@ -570,7 +575,14 @@ final class TimelineView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if selectingRegion {
+        if loopDragging, let a = loopAnchor {
+            let x = min(max(p.x, rulerRect.minX), rulerRect.maxX)
+            let t = timeForX(x)
+            loopRange = (min(a,t), max(a,t))
+            playhead = t
+            highlightedTime = t
+            needsDisplay = true
+        } else if selectingRegion {
             let t = timeForX(min(max(p.x, plotRect.minX), plotRect.maxX))
             selectionCurrent = t
             playhead = t
@@ -619,6 +631,23 @@ final class TimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if loopDragging, let a = loopAnchor, let r = loopRange {
+            let start = min(r.0, r.1)
+            let end = max(r.0, r.1)
+            if end - start < 0.025 {
+                loopRange = nil
+                playhead = a
+                highlightedTime = a
+                onLoopRangeChanged?(nil, nil)
+            } else {
+                loopRange = (start, end)
+                playhead = start
+                highlightedTime = start
+                onLoopRangeChanged?(start, end)
+            }
+        }
+        loopDragging = false
+        loopAnchor = nil
         if selectingRegion, let a = selectionAnchor, let b = selectionCurrent {
             let start = min(a, b)
             let end = max(a, b)
@@ -773,6 +802,7 @@ final class TimelineView: NSView {
         } else {
             drawWaveform(m)
         }
+        drawLoopRange()
         drawSelectionRegion()
         drawEvents(m)
         drawPlayhead()
@@ -927,6 +957,25 @@ final class TimelineView: NSView {
         NSColor.white.withAlphaComponent(0.10).setStroke()
         zero.lineWidth = 0.5
         zero.stroke()
+    }
+
+    private func drawLoopRange() {
+        guard let r = loopRange else { return }
+        let start=max(viewStart,min(r.0,r.1)), end=min(viewEnd,max(r.0,r.1))
+        guard end > start else { return }
+        let x1=xForTime(start), x2=xForTime(end)
+        let region=NSRect(x:x1,y:plotRect.minY,width:max(2,x2-x1),height:plotRect.height)
+        NSColor(hex:0x1688E8).withAlphaComponent(0.075).setFill(); region.fill()
+        let bar=NSRect(x:x1,y:rulerRect.maxY-7,width:max(2,x2-x1),height:6)
+        NSColor(hex:0x2EA8FF).withAlphaComponent(0.92).setFill(); NSBezierPath(roundedRect:bar,xRadius:2,yRadius:2).fill()
+        for x in [x1,x2] {
+            let line=NSBezierPath(); line.move(to:NSPoint(x:x,y:plotRect.minY)); line.line(to:NSPoint(x:x,y:rulerRect.maxY));
+            NSColor(hex:0x2EA8FF).withAlphaComponent(0.75).setStroke(); line.lineWidth=1; line.stroke()
+        }
+        let dur=max(0,end-start)
+        let txt=String(format:"LOOP  %.3f s",dur)
+        let attrs:[NSAttributedString.Key:Any]=[.font:NSFont.monospacedDigitSystemFont(ofSize:8,weight:.semibold),.foregroundColor:NSColor(hex:0xA9DCFF)]
+        txt.draw(at:NSPoint(x:x1+6,y:rulerRect.maxY-24),withAttributes:attrs)
     }
 
     private func drawSelectionRegion() {
@@ -1130,7 +1179,7 @@ final class TimelineView: NSView {
 
     private func drawInstructions() {
         let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: NSColor(hex: 0x60717E)]
-        "Scroll: zoom   •   ⇧ drag: new event   •   center handle: gain   •   edge diamonds: fades   •   Space: play/stop".draw(
+        "Ruler drag: LOOP   •   Scroll: zoom   •   ⇧ drag: new event   •   gain/fades edit on waveform   •   Space: play/stop".draw(
             at: NSPoint(x: plotRect.minX + 8, y: bounds.height - 18),
             withAttributes: attrs
         )
@@ -1565,6 +1614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var externalReferenceModel: AudioModel?
     private var externalReferenceEvents: [SibilanceEvent] = []
     private var levelMatchedAudition = true
+    private var transportLoopRange: (Double, Double)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildUI()
@@ -1661,15 +1711,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeline.onEventGainChanged={ [weak self] i,g in self?.eventGainChanged(i,gain:g) }
         timeline.onEventFadesChanged={ [weak self] i,a,b in self?.eventFadesChanged(i,fadeIn:a,fadeOut:b) }
         timeline.onCreateEventRegion={ [weak self] a,b in self?.createEventFromSelection(start:a,end:b) }
+        timeline.onLoopRangeChanged={ [weak self] a,b in self?.setTransportLoop(start:a,end:b) }
         editorPanel.addSubview(timeline)
 
         let zin=button("＋",action:#selector(zoomInTimeline)); zin.frame=NSRect(x:14,y:16,width:30,height:26); editorPanel.addSubview(zin)
         let zout=button("−",action:#selector(zoomOutTimeline)); zout.frame=NSRect(x:48,y:16,width:30,height:26); editorPanel.addSubview(zout)
         let fit=button("Fit",action:#selector(fitTimeline)); fit.frame=NSRect(x:82,y:16,width:42,height:26); editorPanel.addSubview(fit)
+        loopButton=button("Loop",action:#selector(toggleTimelineLoop)); loopButton.frame=NSRect(x:130,y:16,width:58,height:26); editorPanel.addSubview(loopButton)
         let prevTop=button("◀",action:#selector(previousEvent)); prevTop.frame=NSRect(x:editorW/2-58,y:14,width:34,height:28); editorPanel.addSubview(prevTop)
         let playTop=button("▶",action:#selector(playSelected)); playTop.frame=NSRect(x:editorW/2-18,y:14,width:40,height:28); editorPanel.addSubview(playTop)
         let nextTop=button("▶|",action:#selector(nextEvent)); nextTop.frame=NSRect(x:editorW/2+28,y:14,width:38,height:28); editorPanel.addSubview(nextTop)
-        detectedFooter=label("Detected: 0 events",size:9,weight:.semibold,color:NSColor(hex:0x4BAEFF)); detectedFooter.frame=NSRect(x:136,y:20,width:160,height:18); editorPanel.addSubview(detectedFooter)
+        detectedFooter=label("Detected: 0 events",size:9,weight:.semibold,color:NSColor(hex:0x4BAEFF)); detectedFooter.frame=NSRect(x:198,y:20,width:160,height:18); editorPanel.addSubview(detectedFooter)
 
         annotationsPanel=makePanel(NSRect(x:editorX+editorW+gap,y:editorY,width:inspectorW,height:editorH)); annotationsPanel.fillColor=NSColor(hex:0x0A151E); root.addSubview(annotationsPanel)
         let evTitle=label("EVENTS",size:10,weight:.bold,color:.white); evTitle.frame=NSRect(x:14,y:editorH-31,width:120,height:18); annotationsPanel.addSubview(evTitle)
@@ -1827,6 +1879,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         annotationsPanel.isHidden = inspectorHidden
         inspectorToggleButton.title = inspectorHidden ? "Show Events" : "Events"
         status.stringValue = inspectorHidden ? "EVENTS PANEL HIDDEN" : "EVENTS PANEL VISIBLE"
+    }
+
+    private func setTransportLoop(start: Double?, end: Double?) {
+        if let a=start, let b=end, b-a >= 0.025 {
+            transportLoopRange=(a,b)
+            loopEnabled=true
+            loopButton?.title="Loop ON"
+            status.stringValue=String(format:"LOOP %.3f–%.3f s",a,b)
+        } else {
+            transportLoopRange=nil
+            loopEnabled=false
+            loopButton?.title="Loop"
+            status.stringValue="LOOP CLEARED"
+        }
+    }
+
+    @objc private func toggleTimelineLoop() {
+        guard let r=transportLoopRange else { status.stringValue="DRAG ON THE TIME RULER TO SET LOOP"; return }
+        loopEnabled.toggle()
+        loopButton.title=loopEnabled ? "Loop ON" : "Loop OFF"
+        timeline.loopRange = loopEnabled ? r : nil
+        if loopEnabled { timeline.playhead=r.0 }
     }
 
     @objc private func zoomInTimeline() { timeline.zoomIn() }
@@ -2504,7 +2578,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                 p = try AVAudioPlayer(contentsOf: url)
                 scrubPlayer = p
             }
-            transportStartTime = min(max(0, timeline.playhead), max(0, p.duration - 0.01))
+            if loopEnabled, let r=transportLoopRange {
+                transportStartTime = min(max(0,r.0),max(0,p.duration-0.01))
+            } else {
+                transportStartTime = min(max(0, timeline.playhead), max(0, p.duration - 0.01))
+            }
             p.currentTime = transportStartTime
             p.play()
             transportPlaying = true
@@ -2513,9 +2591,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
             transportTimer?.invalidate()
             transportTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
                 guard let self = self, let player = self.activeTransportPlayer() else { return }
+                if self.loopEnabled, let r=self.transportLoopRange, player.currentTime >= r.1 - 0.004 {
+                    player.currentTime = r.0
+                    if !player.isPlaying { player.play() }
+                }
                 self.timeline.followPlayback(to: player.currentTime)
                 self.currentTimeLabel?.stringValue = self.formatTime(player.currentTime)
-                if !player.isPlaying && self.transportPlaying {
+                if !player.isPlaying && self.transportPlaying && !(self.loopEnabled && self.transportLoopRange != nil) {
                     self.transportPlaying = false
                     self.transportTimer?.invalidate()
                     self.playButton.title = "▶  Play"
@@ -2700,10 +2782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         }
     }
 
-    @objc private func toggleLoop() {
-        loopEnabled.toggle()
-        loopButton.title = loopEnabled ? "Loop ON" : "Loop OFF"
-    }
+    @objc private func toggleLoop() { toggleTimelineLoop() }
 
     private func finishPreview() {
         previewPlayer?.stop()
