@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.4.1"
+let RGVersion = "0.4.2"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -652,15 +652,17 @@ final class TimelineView: NSView {
 
     private func gainFaderRect(for i: Int) -> NSRect {
         guard events.indices.contains(i) else { return .zero }
-        let centerX = xForTime(events[i].peakTime)
-        return NSRect(x: centerX - 28, y: plotRect.midY - 54, width: 56, height: 108)
+        let startX = xForTime(events[i].start)
+        let endX = xForTime(events[i].end)
+        return NSRect(x: min(startX, endX), y: plotRect.midY - 64, width: max(36, abs(endX - startX)), height: 128)
     }
 
     private func updateGainDrag(_ i: Int, y: CGFloat) {
         guard events.indices.contains(i) else { return }
-        let range: CGFloat = 48
-        let clampedY = min(plotRect.midY + range, max(plotRect.midY - range, y))
-        let normalized = Double((clampedY - (plotRect.midY - range)) / (range * 2))
+        let top = plotRect.midY + 54
+        let bottom = plotRect.midY - 54
+        let clampedY = min(top, max(bottom, y))
+        let normalized = Double((clampedY - bottom) / max(1, top - bottom))
         let value = -18.0 + normalized * 18.0
         events[i].gainDB = min(0, max(-18, value))
         onEventGainChanged?(i, events[i].gainDB)
@@ -1028,59 +1030,58 @@ final class TimelineView: NSView {
             }
 
             if selected {
-                let fader = gainFaderRect(for: i)
-                let centerX = fader.midX
-                let range: CGFloat = 48
-                let rail = NSBezierPath()
-                rail.move(to: NSPoint(x: centerX, y: plotRect.midY - range))
-                rail.line(to: NSPoint(x: centerX, y: plotRect.midY + range))
-                NSColor.white.withAlphaComponent(0.24).setStroke()
-                rail.lineWidth = 1
-                rail.stroke()
-                let norm = CGFloat((min(0, max(-18, e.gainDB)) + 18) / 18)
-                let knobY = plotRect.midY - range + norm * range * 2
-                let knob = NSBezierPath(roundedRect: NSRect(x: centerX - 18, y: knobY - 9, width: 36, height: 18), xRadius: 9, yRadius: 9)
-                NSColor.white.setFill()
-                knob.fill()
-                let gattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold), .foregroundColor: NSColor.white.withAlphaComponent(0.9)]
-                let gainText = String(format: "%.1f dB", e.gainDB)
-                let gainSize = gainText.size(withAttributes: gattrs)
-                gainText.draw(at: NSPoint(x: centerX - gainSize.width / 2, y: knobY - 4), withAttributes: gattrs)
+                // Pro Tools-like clip gain: horizontal line across the event, center node controls level.
+                let minDB: Double = -18.0
+                let maxDB: Double = 0.0
+                let gdb = min(maxDB, max(minDB, e.gainDB))
+                let norm = CGFloat((gdb - minDB) / (maxDB - minDB))
+                let gainTop = plotRect.midY + 54
+                let gainBottom = plotRect.midY - 54
+                let gainY = gainBottom + norm * (gainTop - gainBottom)
 
-                let envY = plotRect.midY + CGFloat(min(0,max(-18,e.gainDB))/18.0) * 72.0
-                let env = NSBezierPath(); env.lineWidth = 1.6
-                env.move(to:NSPoint(x:startX,y:plotRect.midY)); env.line(to:NSPoint(x:min(endX,startX+14),y:envY)); env.line(to:NSPoint(x:max(startX,endX-14),y:envY)); env.line(to:NSPoint(x:endX,y:plotRect.midY))
-                NSColor.white.withAlphaComponent(0.86).setStroke(); env.stroke()
-                let clipHandle=NSBezierPath(roundedRect:NSRect(x:centerX-22,y:envY-8,width:44,height:16),xRadius:5,yRadius:5); NSColor(hex:0xE7EDF2).setFill(); clipHandle.fill()
-                let ca:[NSAttributedString.Key:Any]=[.font:NSFont.monospacedDigitSystemFont(ofSize:8,weight:.bold),.foregroundColor:NSColor(hex:0x17212A)]
-                let ct=String(format:"%.1f",e.gainDB); let cs=ct.size(withAttributes:ca); ct.draw(at:NSPoint(x:centerX-cs.width/2,y:envY-5),withAttributes:ca)
+                let gainLine = NSBezierPath()
+                gainLine.move(to: NSPoint(x: startX + 4, y: gainY))
+                gainLine.line(to: NSPoint(x: endX - 4, y: gainY))
+                NSColor.white.withAlphaComponent(0.92).setStroke()
+                gainLine.lineWidth = 1.5
+                gainLine.stroke()
 
+                let centerX = (startX + endX) * 0.5
+                let node = NSBezierPath(ovalIn: NSRect(x: centerX - 6, y: gainY - 6, width: 12, height: 12))
+                NSColor.white.setFill(); node.fill()
+                color.setStroke(); node.lineWidth = 1.5; node.stroke()
+
+                let tag = String(format: "%.1f dB", e.gainDB)
+                let tagAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
+                    .foregroundColor: NSColor.white
+                ]
+                let ts = tag.size(withAttributes: tagAttrs)
+                let tr = NSRect(x: centerX - ts.width/2 - 6, y: gainY + 9, width: ts.width + 12, height: 18)
+                NSColor(hex: 0x3B1115).withAlphaComponent(0.94).setFill()
+                NSBezierPath(roundedRect: tr, xRadius: 4, yRadius: 4).fill()
+                tag.draw(at: NSPoint(x: tr.minX + 6, y: tr.minY + 3), withAttributes: tagAttrs)
+
+                // Fades: handles live on the event top corners; curve visually ends at the gain line.
                 let inX = xForTime(min(e.end, e.start + e.fadeIn))
                 let outX = xForTime(max(e.start, e.end - e.fadeOut))
-                let fadeTop = plotRect.midY + 34
-                let fadeBottom = plotRect.midY - 34
+                let fadeTop = plotRect.maxY - 26
                 let fadeInPath = NSBezierPath()
                 fadeInPath.move(to: NSPoint(x: startX, y: fadeTop))
-                fadeInPath.line(to: NSPoint(x: inX, y: fadeBottom))
-                color.withAlphaComponent(0.9).setStroke()
-                fadeInPath.lineWidth = 1.4
-                fadeInPath.stroke()
+                fadeInPath.curve(to: NSPoint(x: inX, y: gainY), controlPoint1: NSPoint(x: startX + (inX-startX)*0.35, y: fadeTop), controlPoint2: NSPoint(x: inX - (inX-startX)*0.20, y: gainY))
+                color.withAlphaComponent(0.95).setStroke(); fadeInPath.lineWidth = 1.6; fadeInPath.stroke()
                 let fadeOutPath = NSBezierPath()
-                fadeOutPath.move(to: NSPoint(x: outX, y: fadeBottom))
-                fadeOutPath.line(to: NSPoint(x: endX, y: fadeTop))
-                fadeOutPath.lineWidth = 1.4
-                fadeOutPath.stroke()
+                fadeOutPath.move(to: NSPoint(x: outX, y: gainY))
+                fadeOutPath.curve(to: NSPoint(x: endX, y: fadeTop), controlPoint1: NSPoint(x: outX + (endX-outX)*0.20, y: gainY), controlPoint2: NSPoint(x: endX - (endX-outX)*0.35, y: fadeTop))
+                fadeOutPath.lineWidth = 1.6; fadeOutPath.stroke()
+
                 for x in [inX, outX] {
-                    let h = NSBezierPath(roundedRect: NSRect(x: x - 5, y: plotRect.midY - 5, width: 10, height: 10), xRadius: 3, yRadius: 3)
-                    color.setFill()
-                    h.fill()
-                    NSColor.white.setStroke()
-                    h.lineWidth = 1
-                    h.stroke()
+                    let h = NSBezierPath(ovalIn: NSRect(x: x - 4, y: gainY - 4, width: 8, height: 8))
+                    color.setFill(); h.fill(); NSColor.white.setStroke(); h.lineWidth = 1; h.stroke()
                 }
-                let fattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.72)]
-                String(format: "IN %.0f ms", e.fadeIn * 1000).draw(at: NSPoint(x: startX + 4, y: fadeTop + 5), withAttributes: fattrs)
-                String(format: "OUT %.0f ms", e.fadeOut * 1000).draw(at: NSPoint(x: max(startX, endX - 58), y: fadeTop + 5), withAttributes: fattrs)
+                let fattrs: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.75)]
+                String(format: "%.0f ms", e.fadeIn * 1000).draw(at: NSPoint(x: startX + 5, y: plotRect.minY + 8), withAttributes: fattrs)
+                String(format: "%.0f ms", e.fadeOut * 1000).draw(at: NSPoint(x: max(startX, endX - 42), y: plotRect.minY + 8), withAttributes: fattrs)
             }
         }
     }
@@ -1590,7 +1591,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     }
 
     private func buildUI() {
-        // CLEAN PRO 0.4.1 PRO TOOLS: fixed geometry first. No resize until the visual shell is stable.
+        // CLEAN PRO 0.4.2 PRO TOOLS: fixed geometry first. No resize until the visual shell is stable.
         let w: CGFloat = 1540
         let h: CGFloat = 920
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: w, height: h)
@@ -1646,8 +1647,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let pGood=button("GOOD",action:#selector(markGood)); pGood.frame=NSRect(x:550,y:editorH-35,width:56,height:26); editorPanel.addSubview(pGood)
         let pBad=button("BAD",action:#selector(markBad)); pBad.frame=NSRect(x:612,y:editorH-35,width:50,height:26); editorPanel.addSubview(pBad)
         let pNote=button("Note",action:#selector(addAnnotation)); pNote.frame=NSRect(x:668,y:editorH-35,width:58,height:26); editorPanel.addSubview(pNote)
-        pinnedGainSlider=NSSlider(value:0,minValue:-18,maxValue:0,target:self,action:#selector(pinnedGainChanged(_:))); pinnedGainSlider.frame=NSRect(x:738,y:editorH-32,width:120,height:20); pinnedGainSlider.isEnabled=false; editorPanel.addSubview(pinnedGainSlider)
-        pinnedNoteLabel=label("",size:8,color:NSColor(hex:0x647988)); pinnedNoteLabel.frame=NSRect(x:868,y:editorH-31,width:editorW-882,height:18); pinnedNoteLabel.lineBreakMode = .byTruncatingTail; editorPanel.addSubview(pinnedNoteLabel)
+        pinnedGainSlider=NSSlider(value:0,minValue:-18,maxValue:0,target:self,action:#selector(pinnedGainChanged(_:))); pinnedGainSlider.frame = .zero; pinnedGainSlider.isHidden = true; pinnedGainSlider.isEnabled = false; editorPanel.addSubview(pinnedGainSlider)
+        pinnedNoteLabel=label("",size:8,color:NSColor(hex:0x647988)); pinnedNoteLabel.frame=NSRect(x:742,y:editorH-31,width:editorW-756,height:18); pinnedNoteLabel.lineBreakMode = .byTruncatingTail; editorPanel.addSubview(pinnedNoteLabel)
 
         timeline=TimelineView(frame:NSRect(x:10,y:54,width:editorW-20,height:editorH-98))
         timeline.onAudioDrop={ [weak self] u in self?.loadAudio(u) }
@@ -1755,30 +1756,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         // Footer
         eventInfo=label("READY",size:8,color:NSColor(hex:0x748997)); eventInfo.frame=NSRect(x:18,y:32,width:1060,height:18); root.addSubview(eventInfo)
         status=label("READY — drop WAV/AIFF",size:9,weight:.bold,color:.systemGreen); status.frame=NSRect(x:18,y:10,width:880,height:18); root.addSubview(status)
-        let ver=label("v\(RGVersion) CLEAN PRO BETA",size:8,color:NSColor(hex:0x627A8A)); ver.alignment = .right; ver.frame=NSRect(x:w-260,y:10,width:230,height:18); root.addSubview(ver)
+        let ver=label("v\(RGVersion) PRO TOOLS BETA",size:8,color:NSColor(hex:0x627A8A)); ver.alignment = .right; ver.frame=NSRect(x:w-260,y:10,width:230,height:18); root.addSubview(ver)
 
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
     }
 
     private func refreshAnnotationSidebar() {
         guard annotationStack != nil else { return }
-        for v in annotationStack.arrangedSubviews { annotationStack.removeArrangedSubview(v); v.removeFromSuperview() }
-        annotationCountLabel?.stringValue = "\(events.count) edits"
-        annotationStack.frame.size.height = CGFloat(max(1, events.count)) * 30.0
-        for (i,e) in events.enumerated() {
-            let state = e.userLabel.isEmpty ? "—" : e.userLabel.capitalized
-            let title = String(format: "%02d   %-2@   %@    %5.1f dB   %@", i+1, e.kind, formatTime(e.peakTime), e.gainDB, state)
-            let b = RGButton(title: title, target: self, action: #selector(selectAnnotationEvent(_:)))
-            b.role = i == timeline.selectedIndex ? .primary : .ghost
+        for v in annotationStack.arrangedSubviews {
+            annotationStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        annotationCountLabel?.stringValue = "\(events.count) events"
+        let rowH: CGFloat = 30
+        let docH = max(annotationStack.enclosingScrollView?.contentSize.height ?? 0, CGFloat(events.count) * (rowH + 4) + 8)
+        annotationStack.frame = NSRect(x: 0, y: 0, width: 240, height: docH)
+        annotationStack.orientation = .vertical
+        annotationStack.alignment = .leading
+        annotationStack.spacing = 4
+        annotationStack.edgeInsets = NSEdgeInsets(top: 4, left: 2, bottom: 4, right: 2)
+
+        for (i, e) in events.enumerated() {
+            let statusText = e.userLabel.isEmpty ? "—" : e.userLabel.capitalized
+            let title = String(format: "%02d   %@   %@   %5.1f dB   %@", i + 1, e.kind, formatTime(e.peakTime), e.gainDB, statusText)
+            let b = NSButton(title: title, target: self, action: #selector(selectAnnotationEvent(_:)))
             b.tag = i
+            b.isBordered = false
             b.alignment = .left
-            b.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: i == timeline.selectedIndex ? .semibold : .regular)
-            b.widthAnchor.constraint(equalToConstant: 240).isActive = true
-            b.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            b.font = NSFont.monospacedSystemFont(ofSize: 9, weight: i == timeline.selectedIndex ? .semibold : .regular)
+            b.contentTintColor = i == timeline.selectedIndex ? NSColor.white : NSColor(hex: 0xB7C4CD)
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 4
+            if i == timeline.selectedIndex {
+                b.layer?.backgroundColor = NSColor(hex: 0x4D171B).cgColor
+                b.layer?.borderColor = NSColor(hex: 0xA5353D).cgColor
+                b.layer?.borderWidth = 1
+            } else {
+                b.layer?.backgroundColor = NSColor(hex: 0x111C25).cgColor
+                b.layer?.borderWidth = 0
+            }
+            b.widthAnchor.constraint(equalToConstant: 236).isActive = true
+            b.heightAnchor.constraint(equalToConstant: rowH).isActive = true
             annotationStack.addArrangedSubview(b)
         }
         annotationStack.needsLayout = true
-        annotationStack.layoutSubtreeIfNeeded()
+        annotationStack.enclosingScrollView?.documentView?.frame.size.height = docH
     }
 
     @objc private func selectAnnotationEvent(_ sender: NSButton) {
