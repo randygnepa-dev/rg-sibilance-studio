@@ -7,4 +7,4 @@ four_bottom_sections=true
 live_annotation_comments=true
 prebuilt_updater=true
 preserve_all_features=true
-retry=1
+retry=2
