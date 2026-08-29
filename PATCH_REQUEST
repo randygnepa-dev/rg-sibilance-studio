@@ -1,10 +1,10 @@
-release=0.3.3
+release=0.4.0
+clean_pro=true
 fixed_window=true
 resize_disabled=true
-rx_style_workspace=true
-strict_repair_rows=true
+replace_build_ui=true
+five_fixed_modules=true
+fixed_events_inspector=true
+spectral_shape_graph=true
 no_overlapping_controls=true
-single_editor_focus=true
-reference_section=true
-spectral_tilt_flatten_whistle=true
 preserve_existing_dsp=true
