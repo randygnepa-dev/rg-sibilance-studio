@@ -22,7 +22,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Read version
         id: version
         shell: bash
@@ -30,45 +29,29 @@ jobs:
           VERSION="$(tr -d '[:space:]' < VERSION)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building RG Sibilance Studio $VERSION"
-
-      - name: Prepare Swift executable entry point
+      - name: Prepare Swift sources
         shell: bash
         run: |
           rm -rf build-src
           mkdir -p build-src
           cp Sources/*.swift build-src/
-          mv build-src/RGSibilanceStudio.swift build-src/main.swift
-
       - name: Compile Apple Silicon
         shell: bash
         run: |
           mkdir -p build/arm64 build/x86_64 dist
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc build-src/*.swift \
-            -sdk "$SDK" \
-            -target arm64-apple-macosx12.0 \
-            -framework Cocoa -framework AVFoundation \
-            -O \
-            -o build/arm64/RGSibilanceStudio
-
+          xcrun --sdk macosx swiftc build-src/*.swift -sdk "$SDK" -target arm64-apple-macosx12.0 -framework Cocoa -framework AVFoundation -O -o build/arm64/RGSibilanceStudio
       - name: Compile Intel
         shell: bash
         run: |
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          xcrun --sdk macosx swiftc build-src/*.swift \
-            -sdk "$SDK" \
-            -target x86_64-apple-macosx12.0 \
-            -framework Cocoa -framework AVFoundation \
-            -O \
-            -o build/x86_64/RGSibilanceStudio
-
+          xcrun --sdk macosx swiftc build-src/*.swift -sdk "$SDK" -target x86_64-apple-macosx12.0 -framework Cocoa -framework AVFoundation -O -o build/x86_64/RGSibilanceStudio
       - name: Create universal binary
         shell: bash
         run: |
           lipo -create build/arm64/RGSibilanceStudio build/x86_64/RGSibilanceStudio -output dist/RGSibilanceStudio
           chmod +x dist/RGSibilanceStudio
           lipo -info dist/RGSibilanceStudio
-
       - name: Build application bundle
         shell: bash
         run: |
@@ -92,7 +75,6 @@ jobs:
           </dict></plist>
           PLIST
           codesign --force --deep --sign - "$APP"
-
       - name: Package update
         shell: bash
         run: |
@@ -101,7 +83,6 @@ jobs:
           shasum -a 256 "dist/RG-Sibilance-Studio-${VERSION}.zip" | awk '{print $1}' > dist/SHA256
           cp VERSION dist/VERSION
           printf '%s\n' "RG-Sibilance-Studio-${VERSION}.zip" > dist/LATEST
-
       - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
@@ -112,7 +93,6 @@ jobs:
             dist/VERSION
             dist/LATEST
             dist/SHA256
-
       - name: Publish dist to repository
         shell: bash
         run: |
@@ -126,4 +106,4 @@ jobs:
             git push
           fi
 
-# retry 0.2.26 after exemplar store collision fix
+# 0.2.27 updater entrypoint compatibility
