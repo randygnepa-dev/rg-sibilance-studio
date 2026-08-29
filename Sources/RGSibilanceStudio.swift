@@ -1579,7 +1579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         editorPanel=makePanel(NSRect(x:editorX,y:editorY,width:editorW,height:editorH)); editorPanel.fillColor=NSColor(hex:0x0A151E); root.addSubview(editorPanel)
 
         viewTabsControl=NSSegmentedControl(labels:["WAVEFORM","SPECTROGRAM"],trackingMode:.selectOne,target:self,action:#selector(viewModeChanged(_:)))
-        viewTabsControl.selectedSegment=0; viewTabsControl.frame=NSRect(x:14,y:editorH-34,width:190,height:24); viewTabsControl.controlSize=.small; editorPanel.addSubview(viewTabsControl)
+        viewTabsControl.selectedSegment=0; viewTabsControl.frame=NSRect(x:14,y:editorH-34,width:190,height:24); viewTabsControl.controlSize = .small; editorPanel.addSubview(viewTabsControl)
         currentTimeLabel=label("00:00.000",size:13,weight:.bold,color:NSColor(hex:0x4AABFF)); currentTimeLabel.font=NSFont.monospacedDigitSystemFont(ofSize:13,weight:.bold); currentTimeLabel.frame=NSRect(x:216,y:editorH-33,width:100,height:22); editorPanel.addSubview(currentTimeLabel)
         pinnedEventLabel=label("NO EVENT SELECTED",size:9,weight:.semibold,color:NSColor(hex:0x7F95A4)); pinnedEventLabel.frame=NSRect(x:330,y:editorH-32,width:250,height:20); editorPanel.addSubview(pinnedEventLabel)
         let pPlay=button("▶",action:#selector(playSelected)); pPlay.frame=NSRect(x:590,y:editorH-35,width:34,height:26); editorPanel.addSubview(pPlay)
@@ -1587,7 +1587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let pBad=button("BAD",action:#selector(markBad)); pBad.frame=NSRect(x:692,y:editorH-35,width:50,height:26); editorPanel.addSubview(pBad)
         let pNote=button("Note",action:#selector(addAnnotation)); pNote.frame=NSRect(x:748,y:editorH-35,width:58,height:26); editorPanel.addSubview(pNote)
         pinnedGainSlider=NSSlider(value:0,minValue:-18,maxValue:0,target:self,action:#selector(pinnedGainChanged(_:))); pinnedGainSlider.frame=NSRect(x:818,y:editorH-32,width:120,height:20); pinnedGainSlider.isEnabled=false; editorPanel.addSubview(pinnedGainSlider)
-        pinnedNoteLabel=label("",size:8,color:NSColor(hex:0x647988)); pinnedNoteLabel.frame=NSRect(x:948,y:editorH-31,width:editorW-962,height:18); pinnedNoteLabel.lineBreakMode=.byTruncatingTail; editorPanel.addSubview(pinnedNoteLabel)
+        pinnedNoteLabel=label("",size:8,color:NSColor(hex:0x647988)); pinnedNoteLabel.frame=NSRect(x:948,y:editorH-31,width:editorW-962,height:18); pinnedNoteLabel.lineBreakMode = .byTruncatingTail; editorPanel.addSubview(pinnedNoteLabel)
 
         timeline=TimelineView(frame:NSRect(x:10,y:54,width:editorW-20,height:editorH-98))
         timeline.onAudioDrop={ [weak self] u in self?.loadAudio(u) }
@@ -1615,7 +1615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let annAdd=button("＋ Add",action:#selector(addAnnotation)); annAdd.frame=NSRect(x:inspectorW-76,y:editorH-36,width:62,height:26); annotationsPanel.addSubview(annAdd)
         annotationCountLabel=label("0 events",size:8,color:NSColor(hex:0x667D8D)); annotationCountLabel.frame=NSRect(x:14,y:12,width:100,height:18); annotationsPanel.addSubview(annotationCountLabel)
         let scroll=NSScrollView(frame:NSRect(x:10,y:36,width:inspectorW-20,height:editorH-78)); scroll.drawsBackground=false; scroll.hasVerticalScroller=true
-        annotationStack=NSStackView(frame:NSRect(x:0,y:0,width:inspectorW-38,height:scroll.bounds.height)); annotationStack.orientation=.vertical; annotationStack.alignment=.leading; annotationStack.spacing=5; scroll.documentView=annotationStack; annotationsPanel.addSubview(scroll)
+        annotationStack=NSStackView(frame:NSRect(x:0,y:0,width:inspectorW-38,height:scroll.bounds.height)); annotationStack.orientation = .vertical; annotationStack.alignment = .leading; annotationStack.spacing=5; scroll.documentView=annotationStack; annotationsPanel.addSubview(scroll)
 
         // MARK: Bottom modules — exact fixed grid, no overlap possible.
         let bottomY:CGFloat=70, bottomH:CGFloat=208
@@ -1661,10 +1661,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let normal=button("NORMAL",action:#selector(markNormal)); normal.frame=NSRect(x:302,y:8,width:62,height:26); repair.addSubview(normal)
 
         addTitle("REFERENCE",to:ref,y:bottomH-28)
-        referenceInfoLabel=label("No saved reference",size:8,color:NSColor(hex:0x718897)); referenceInfoLabel.frame=NSRect(x:14,y:bottomH-57,width:194,height:18); referenceInfoLabel.lineBreakMode=.byTruncatingTail; ref.addSubview(referenceInfoLabel)
+        referenceInfoLabel=label("No saved reference",size:8,color:NSColor(hex:0x718897)); referenceInfoLabel.frame=NSRect(x:14,y:bottomH-57,width:194,height:18); referenceInfoLabel.lineBreakMode = .byTruncatingTail; ref.addSubview(referenceInfoLabel)
         let saveRef=button("Save Good",action:#selector(setSelectedAsReference)); saveRef.frame=NSRect(x:14,y:bottomH-94,width:92,height:30); ref.addSubview(saveRef)
         let matchRef=button("Match",action:#selector(matchSelectedToReference)); matchRef.frame=NSRect(x:114,y:bottomH-94,width:92,height:30); ref.addSubview(matchRef)
-        let refHint=label("Spectral shape is normalized before matching, then level stays independent.",size:8,color:NSColor(hex:0x627989)); refHint.frame=NSRect(x:14,y:52,width:194,height:44); refHint.lineBreakMode=.byWordWrapping; refHint.maximumNumberOfLines=3; ref.addSubview(refHint)
+        let refHint=label("Spectral shape is normalized before matching, then level stays independent.",size:8,color:NSColor(hex:0x627989)); refHint.frame=NSRect(x:14,y:52,width:194,height:44); refHint.lineBreakMode = .byWordWrapping; refHint.maximumNumberOfLines=3; ref.addSubview(refHint)
         let morphStrength=label("Reference character",size:8,color:NSColor(hex:0x6F8493)); morphStrength.frame=NSRect(x:14,y:25,width:150,height:16); ref.addSubview(morphStrength)
 
         addTitle("PROCESS",to:process,y:bottomH-28)
@@ -1694,7 +1694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         // Footer
         eventInfo=label("READY",size:8,color:NSColor(hex:0x748997)); eventInfo.frame=NSRect(x:18,y:32,width:1060,height:18); root.addSubview(eventInfo)
         status=label("READY — drop WAV/AIFF",size:9,weight:.bold,color:.systemGreen); status.frame=NSRect(x:18,y:10,width:880,height:18); root.addSubview(status)
-        let ver=label("v\(RGVersion) CLEAN PRO BETA",size:8,color:NSColor(hex:0x627A8A)); ver.alignment=.right; ver.frame=NSRect(x:w-260,y:10,width:230,height:18); root.addSubview(ver)
+        let ver=label("v\(RGVersion) CLEAN PRO BETA",size:8,color:NSColor(hex:0x627A8A)); ver.alignment = .right; ver.frame=NSRect(x:w-260,y:10,width:230,height:18); root.addSubview(ver)
 
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
     }
