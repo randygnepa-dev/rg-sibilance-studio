@@ -15,19 +15,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_29.py
+        run: python3 scripts/patch_0_2_30.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.29"' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.30"' Sources/RGSibilanceStudio.swift
+          grep -F 'AUTO UPDATE ON' Sources/RGSibilanceStudio.swift
+          grep -F 'Drop vocal here' Sources/RGSibilanceStudio.swift
+          grep -F 'AUTO REPAIR' Sources/RGSibilanceStudio.swift
           grep -F 'dist/VERSION' Sources/RGSibilanceStudio.swift
           grep -F 'applyPrebuilt' Sources/RGSibilanceStudio.swift
-          grep -F 'SHA256 verification' Sources/RGSibilanceStudio.swift
           grep -F '@main' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.29\n' > VERSION
+          printf '0.2.30\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.29 prebuilt self updater"
+          git commit -m "Release 0.2.30 focused editor UI"
           git push
