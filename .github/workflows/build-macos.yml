@@ -107,4 +107,4 @@ jobs:
             git push
           fi
 
-# trigger 0.2.32 visual match and annotations sidebar build
+# trigger 0.2.33 closer visual match build
