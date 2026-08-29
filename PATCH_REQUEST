@@ -1,2 +1,5 @@
-release=0.2.14
+release=0.2.15
 auto_analyze_on_load=true
+waveform_event_editing=true
+right_click_add_delete=true
+delete_key_remove=true
