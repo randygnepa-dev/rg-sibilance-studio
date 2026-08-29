@@ -15,21 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_23.py
+        run: python3 scripts/fix_0_2_23_updater.py
       - name: Validate source
         run: |
           grep -F 'let RGVersion = "0.2.23"' Sources/RGSibilanceStudio.swift
-          grep -F 'drawSpectralOverlay' Sources/RGSibilanceStudio.swift
+          grep -F 'RGAdvancedEngine-' Sources/RGSibilanceStudio.swift
+          grep -F 'helper.path' Sources/RGSibilanceStudio.swift
           grep -F 'Export RG-SIB' Sources/RGSibilanceStudio.swift
-          grep -F 'AUTO SAFE' Sources/RGSibilanceStudio.swift
-          grep -F 'SESSION RESTORED — LAST EDITED STAGE' Sources/RGSibilanceStudio.swift
-          grep -F 'RGRenderEngine.export' Sources/RGSibilanceStudio.swift
-          test -f Sources/RGAdvancedEngine.swift
       - name: Commit source and version
         run: |
           printf '0.2.23\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Sources/RGSibilanceStudio.swift Sources/RGAdvancedEngine.swift VERSION
-          git commit -m "Release 0.2.23 advanced waveform persistence export repair"
+          git add Sources/RGSibilanceStudio.swift VERSION
+          git commit -m "Fix 0.2.23 updater advanced engine compilation"
           git push
