@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.29"
+let RGVersion = "0.2.30"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -753,7 +753,7 @@ final class TimelineView: NSView {
 
         guard let m = model, !m.samples.isEmpty else {
             let title = dragActive ? "DROP AUDIO" : "DRAG & DROP WAV / AIFF"
-            let sub = "Waveform, analýza aj editácia ostávajú v tomto okne"
+            let sub = "Drop vocal here • analyze • edit directly on waveform"
             drawCentered(title, y: bounds.midY + 4, size: 20, color: .white, bold: true)
             drawCentered(sub, y: bounds.midY - 27, size: 12, color: NSColor(hex: 0x778895), bold: false)
             return
@@ -1429,7 +1429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let title = label("RG Sibilance Studio", size: 28, weight: .bold, color: .white)
         title.frame = NSRect(x: 42, y: h - 75, width: 460, height: 38)
         root.addSubview(title)
-        let subtitle = label("Sibilance detection & repair   •   AUTO UPDATE BETA", size: 12, color: NSColor(hex: 0x8D9AA6))
+        let subtitle = label("Sibilance detection & repair   •   AUTO UPDATE ON", size: 12, color: NSColor(hex: 0x8D9AA6))
         subtitle.frame = NSRect(x: 44, y: h - 101, width: 540, height: 20)
         root.addSubview(subtitle)
 
@@ -1441,12 +1441,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         open.frame = NSRect(x: w - 188, y: h - 84, width: 146, height: 40)
         root.addSubview(open)
 
-        dropView = AudioDropView(frame: NSRect(x: 42, y: h - 283, width: w - 84, height: 160))
-        dropView.onAudioDrop = { [weak self] url in self?.loadAudio(url) }
-        root.addSubview(dropView)
-
-        let editorY = h - 674
-        let editorH: CGFloat = 368
+        let editorY: CGFloat = 286
+        let editorH = h - editorY - 124
         let editor = makePanel(NSRect(x: 42, y: editorY, width: w - 84, height: editorH))
         editor.fillColor = NSColor(hex: 0x0C141B)
         root.addSubview(editor)
@@ -1460,7 +1456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeHint.frame = NSRect(x: 166, y: editorH - 34, width: 150, height: 18)
         editor.addSubview(timeHint)
 
-        timeline = TimelineView(frame: NSRect(x: 12, y: 52, width: editor.bounds.width - 66, height: editorH - 92))
+        timeline = TimelineView(frame: NSRect(x: 12, y: 48, width: editor.bounds.width - 66, height: editorH - 82))
         timeline.onAudioDrop = { [weak self] url in self?.loadAudio(url) }
         timeline.onSelect = { [weak self] i in self?.selectEvent(i) }
         timeline.onScrub = { [weak self] t, active in
@@ -1501,8 +1497,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         let panelY: CGFloat = 58
         let panelH = max(CGFloat(216), editorY - 72)
         let gap: CGFloat = 12
-        let leftW: CGFloat = (w - 108) * 0.285
-        let centerW: CGFloat = (w - 108) * 0.37
+        let leftW: CGFloat = (w - 108) * 0.22
+        let centerW: CGFloat = (w - 108) * 0.44
         let rightW = w - 84 - leftW - centerW - gap * 2
         let p1 = makePanel(NSRect(x: 42, y: panelY, width: leftW, height: panelH))
         let p2 = makePanel(NSRect(x: 42 + leftW + gap, y: panelY, width: centerW, height: panelH))
@@ -1510,13 +1506,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         root.addSubview(p1); root.addSubview(p2); root.addSubview(p3)
 
         addTitle("DETECTION", to: p1, y: panelH - 30)
-        let gear = button("⚙", action: #selector(showAdvancedInfo)); gear.frame = NSRect(x: leftW - 48, y: panelH - 43, width: 32, height: 28); p1.addSubview(gear)
-        let sl = label("Sensitivity", size: 11); sl.frame = NSRect(x: 16, y: panelH - 74, width: 92, height: 18); p1.addSubview(sl)
+        let autoBadge = label("AUTO", size: 9, weight: .bold, color: NSColor(hex: 0x4EB4FF))
+        autoBadge.frame = NSRect(x: 16, y: panelH - 62, width: 54, height: 18)
+        p1.addSubview(autoBadge)
+        let detectHelp = label("Sensitivity is adjusted below the waveform. Manual regions: Shift-drag.", size: 10, color: NSColor(hex: 0x667784))
+        detectHelp.frame = NSRect(x: 16, y: 70, width: leftW - 32, height: 42)
+        detectHelp.lineBreakMode = .byWordWrapping
+        detectHelp.maximumNumberOfLines = 3
+        p1.addSubview(detectHelp)
+        let gear = button("⚙ Advanced", action: #selector(showAdvancedInfo))
+        gear.frame = NSRect(x: 16, y: 42, width: min(110, leftW - 32), height: 28)
+        p1.addSubview(gear)
+        let markS = button("+ Mark S", action: #selector(markManualS))
+        markS.frame = NSRect(x: 16, y: 12, width: min(110, leftW - 32), height: 28)
+        p1.addSubview(markS)
         sensitivitySlider = NSSlider(value: 0.72, minValue: 0, maxValue: 1, target: self, action: #selector(sensitivityChanged))
-        sensitivitySlider.frame = NSRect(x: 118, y: panelH - 78, width: leftW - 178, height: 22); p1.addSubview(sensitivitySlider)
-        let detectHelp = label("Advanced detector limits and phoneme options stay under ⚙", size: 10, color: NSColor(hex: 0x667784))
-        detectHelp.frame = NSRect(x: 16, y: 64, width: leftW - 32, height: 34); detectHelp.lineBreakMode = .byWordWrapping; detectHelp.maximumNumberOfLines = 2; p1.addSubview(detectHelp)
-        let markS = button("+ Mark S at playhead", action: #selector(markManualS)); markS.frame = NSRect(x: 16, y: 18, width: 164, height: 30); p1.addSubview(markS)
+        sensitivitySlider.isHidden = true
+        p1.addSubview(sensitivitySlider)
 
         addTitle("REPAIR", to: p2, y: panelH - 30)
         let good = button("GOOD", action: #selector(markGood)); good.frame = NSRect(x: 16, y: panelH - 73, width: 74, height: 28)
@@ -1530,13 +1536,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         kindPopup.addItems(withTitles: ["S", "Š", "Z", "C", "Č", "T", "Ť", "D", "K", "P", "B", "F", "CH", "OTHER"])
         kindPopup.target = self; kindPopup.action = #selector(kindChanged); kindPopup.isEnabled = false; p2.addSubview(kindPopup)
 
-        let rs = label("Repair Strength", size: 11); rs.frame = NSRect(x: 16, y: panelH - 112, width: 110, height: 18); p2.addSubview(rs)
+        let rs = label("SIBILANCE", size: 11, weight: .bold, color: .white); rs.frame = NSRect(x: 16, y: panelH - 112, width: 110, height: 18); p2.addSubview(rs)
         repairSlider = NSSlider(value: 0.66, minValue: 0, maxValue: 1, target: self, action: #selector(repairStrengthChanged(_:)))
         repairSlider.frame = NSRect(x: 126, y: panelH - 116, width: centerW - 210, height: 22); p2.addSubview(repairSlider)
         let less = label("LESS S", size: 9, color: NSColor(hex: 0x738390)); less.frame = NSRect(x: 16, y: panelH - 138, width: 55, height: 16); p2.addSubview(less)
         let more = label("MORE S", size: 9, color: NSColor(hex: 0x738390)); more.frame = NSRect(x: centerW - 76, y: panelH - 138, width: 60, height: 16); p2.addSubview(more)
 
-        autoRepairButton = button("Repair", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 70, width: 108, height: 34); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
+        autoRepairButton = button("AUTO REPAIR", action: #selector(autoRepairSelected)); autoRepairButton.frame = NSRect(x: 16, y: 70, width: 108, height: 34); autoRepairButton.isEnabled = false; p2.addSubview(autoRepairButton)
         let morph = button("Reference Morph", action: #selector(referenceMorphSelected)); morph.frame = NSRect(x: 130, y: 70, width: 140, height: 34); p2.addSubview(morph)
         let blend = button("Reference Blend", action: #selector(referenceBlendSelected)); blend.frame = NSRect(x: 276, y: 70, width: 140, height: 34); p2.addSubview(blend)
         applySimilarButton = button("Apply Similar", action: #selector(applySimilar)); applySimilarButton.frame = NSRect(x: centerW - 132, y: 18, width: 116, height: 30); applySimilarButton.isEnabled = false; p2.addSubview(applySimilarButton)
@@ -1551,11 +1557,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutValue = label("12 ms", size: 9); fadeOutValue.isHidden = true; p2.addSubview(fadeOutValue)
 
         addTitle("PREVIEW", to: p3, y: panelH - 30)
-        playButton = button("▶  Play", action: #selector(playSelected)); playButton.frame = NSRect(x: 16, y: panelH - 76, width: 132, height: 36); p3.addSubview(playButton)
+        playButton = button("▶  PLAY EVENT", action: #selector(playSelected)); playButton.frame = NSRect(x: 16, y: panelH - 76, width: 132, height: 36); p3.addSubview(playButton)
         auditionMode = NSSegmentedControl(labels: ["ORIG", "REPAIR", "DELTA", "S ONLY"], trackingMode: .selectOne, target: self, action: #selector(auditionModeChanged)); auditionMode.selectedSegment = 1; auditionMode.frame = NSRect(x: 156, y: panelH - 77, width: rightW - 260, height: 30); p3.addSubview(auditionMode)
         loopButton = button("↻ Loop", action: #selector(toggleLoop)); loopButton.frame = NSRect(x: rightW - 96, y: panelH - 76, width: 80, height: 36); p3.addSubview(loopButton)
 
-        let outTitle = label("OUTPUT", size: 11, weight: .bold, color: .white); outTitle.frame = NSRect(x: 16, y: panelH - 126, width: 100, height: 18); p3.addSubview(outTitle)
+        let outTitle = label("RENDER / OUTPUT", size: 11, weight: .bold, color: .white); outTitle.frame = NSRect(x: 16, y: panelH - 126, width: 100, height: 18); p3.addSubview(outTitle)
         let outputHelp = label("Event gain + TYPE TRIM + crossfades are rendered to RG-SIB export.", size: 10, color: NSColor(hex: 0x71818D)); outputHelp.frame = NSRect(x: 16, y: panelH - 158, width: rightW - 32, height: 32); outputHelp.lineBreakMode = .byWordWrapping; outputHelp.maximumNumberOfLines = 2; p3.addSubview(outputHelp)
         exportButton = button("Export RG-SIB", action: #selector(exportAudio)); exportButton.frame = NSRect(x: 16, y: 64, width: rightW - 32, height: 36); exportButton.isEnabled = false; p3.addSubview(exportButton)
         stopMode = NSSegmentedControl(labels: ["CONTINUE", "RETURN"], trackingMode: .selectOne, target: self, action: nil); stopMode.selectedSegment = 0; stopMode.frame = NSRect(x: 16, y: 18, width: 176, height: 28); p3.addSubview(stopMode)
