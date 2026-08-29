@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.13"
+let RGVersion = "0.2.14"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -818,8 +818,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
                     self.timeline.playhead = 0
                     self.fileInfo.stringValue = "\(url.lastPathComponent)   •   \(Int(m.sampleRate)) Hz   •   \(m.channels) ch   •   \(String(format: "%.2f", m.duration)) s"
                     self.detectedLabel.stringValue = "Detected: 0 events"
-                    self.eventInfo.stringValue = "Audio loaded — press Analyze"
-                    self.status.stringValue = "AUDIO LOADED — vertical fit locked for this file"
+                    self.eventInfo.stringValue = "Audio loaded — analyzing automatically…"
+                    self.status.stringValue = "AUDIO LOADED — starting automatic analysis…"
+                    self.analyzeAudio()
                 }
             } catch {
                 DispatchQueue.main.async { self.status.stringValue = "LOAD FAILED — \(error.localizedDescription)" }
