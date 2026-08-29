@@ -2,7 +2,7 @@ import Cocoa
 import AVFoundation
 import Foundation
 
-let RGVersion = "0.2.30"
+let RGVersion = "0.2.31"
 let RGRepoRaw = "https://raw.githubusercontent.com/randygnepa-dev/rg-sibilance-studio/main"
 
 extension NSColor {
@@ -23,6 +23,7 @@ struct SibilanceEvent: Codable {
     var score: Double
     var kind: String
     var userLabel: String
+    var note: String? = nil
     var gainDB: Double = 0
     var fadeIn: Double = 0.012
     var fadeOut: Double = 0.012
@@ -994,6 +995,18 @@ final class TimelineView: NSView {
             }
             badgeText.draw(at: NSPoint(x: centerX - textSize.width / 2, y: badgeY + (badgeH - textSize.height) / 2), withAttributes: attrs)
 
+            if let note = e.note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let bubbleText = "✎ " + note
+                let nattrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9, weight: .medium), .foregroundColor: NSColor.white]
+                let ns = bubbleText.size(withAttributes: nattrs)
+                let bw = min(CGFloat(220), max(CGFloat(54), ns.width + 16))
+                let bx = min(plotRect.maxX - bw - 4, max(plotRect.minX + 4, centerX - bw / 2))
+                let by = badgeY - 25
+                let bubble = NSBezierPath(roundedRect: NSRect(x: bx, y: by, width: bw, height: 20), xRadius: 6, yRadius: 6)
+                NSColor(hex: 0x243A4A).withAlphaComponent(selected ? 0.98 : 0.78).setFill(); bubble.fill()
+                bubbleText.draw(in: NSRect(x: bx + 8, y: by + 4, width: bw - 16, height: 14), withAttributes: nattrs)
+            }
+
             if selected {
                 let fader = gainFaderRect(for: i)
                 let centerX = fader.midX
@@ -1362,6 +1375,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
     private var dropView: AudioDropView!
     private var currentTimeLabel: NSTextField!
     private var detectedFooter: NSTextField!
+    private var pinnedEventLabel: NSTextField!
+    private var pinnedGainSlider: NSSlider!
+    private var pinnedNoteLabel: NSTextField!
 
     private var model = AudioModel()
     private var events: [SibilanceEvent] = []
@@ -1456,7 +1472,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         timeHint.frame = NSRect(x: 166, y: editorH - 34, width: 150, height: 18)
         editor.addSubview(timeHint)
 
-        timeline = TimelineView(frame: NSRect(x: 12, y: 48, width: editor.bounds.width - 66, height: editorH - 82))
+        // Pinned event inspector: stays available while the viewport/time position changes.
+        let pinned = makePanel(NSRect(x: 330, y: editorH - 48, width: editor.bounds.width - 396, height: 38))
+        pinned.fillColor = NSColor(hex: 0x0F1D28)
+        pinnedEventLabel = label("NO EVENT SELECTED", size: 10, weight: .bold, color: NSColor(hex: 0x8FA0AD))
+        pinnedEventLabel.frame = NSRect(x: 10, y: 10, width: 205, height: 18)
+        pinned.addSubview(pinnedEventLabel)
+        let pPlay = button("▶", action: #selector(playSelected)); pPlay.frame = NSRect(x: 218, y: 5, width: 34, height: 28); pinned.addSubview(pPlay)
+        let pGood = button("GOOD", action: #selector(markGood)); pGood.frame = NSRect(x: 256, y: 5, width: 55, height: 28); pinned.addSubview(pGood)
+        let pBad = button("BAD", action: #selector(markBad)); pBad.frame = NSRect(x: 315, y: 5, width: 50, height: 28); pinned.addSubview(pBad)
+        let pNote = button("✎ Note", action: #selector(addAnnotation)); pNote.frame = NSRect(x: 369, y: 5, width: 72, height: 28); pinned.addSubview(pNote)
+        pinnedGainSlider = NSSlider(value: 0, minValue: -18, maxValue: 0, target: self, action: #selector(pinnedGainChanged(_:)))
+        pinnedGainSlider.frame = NSRect(x: 448, y: 8, width: 128, height: 22); pinnedGainSlider.isEnabled = false; pinned.addSubview(pinnedGainSlider)
+        pinnedNoteLabel = label("", size: 9, color: NSColor(hex: 0x8FA0AD))
+        pinnedNoteLabel.frame = NSRect(x: 582, y: 10, width: max(80, pinned.bounds.width - 592), height: 18)
+        pinnedNoteLabel.lineBreakMode = .byTruncatingTail
+        pinned.addSubview(pinnedNoteLabel)
+        editor.addSubview(pinned)
+
+        timeline = TimelineView(frame: NSRect(x: 12, y: 48, width: editor.bounds.width - 66, height: editorH - 124))
         timeline.onAudioDrop = { [weak self] url in self?.loadAudio(url) }
         timeline.onSelect = { [weak self] i in self?.selectEvent(i) }
         timeline.onScrub = { [weak self] t, active in
@@ -1892,7 +1926,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate 
         fadeOutValue.stringValue = String(format: "%.0f ms", e.fadeOut * 1000)
         autoRepairButton.isEnabled = true
         applySimilarButton.isEnabled = true
+        pinnedEventLabel?.stringValue = String(format: "#%03d  [%@]  %.3f–%.3f", i + 1, e.kind, e.start, e.end)
+        pinnedGainSlider?.isEnabled = true
+        pinnedGainSlider?.doubleValue = e.gainDB
+        pinnedNoteLabel?.stringValue = (e.note?.isEmpty == false) ? "✎ \(e.note!)" : "No annotation"
         eventInfo.stringValue = String(format: "#%03d [%@]  %.3f–%.3f s  %.0f ms  GAIN %.1f dB  IN %.0f / OUT %.0f ms  %@  •  %@", i + 1, e.kind, e.start, e.end, (e.end - e.start) * 1000, e.gainDB, e.fadeIn * 1000, e.fadeOut * 1000, e.userLabel.isEmpty ? "UNRATED" : e.userLabel, "METHOD \(e.repairMethod ?? "MANUAL") • \(RGRepairAdvisor.qualityText(for: e))")
+    }
+
+    @objc private func pinnedGainChanged(_ sender: NSSlider) {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { return }
+        eventGainChanged(i, gain: sender.doubleValue)
+    }
+
+    @objc private func addAnnotation() {
+        guard let i = timeline.selectedIndex, events.indices.contains(i) else { status.stringValue = "SELECT AN EVENT FIRST"; return }
+        let alert = NSAlert()
+        alert.messageText = "Event annotation"
+        alert.informativeText = "Add a note to event #\(i + 1) [\(events[i].kind)]. It will stay attached to this event and appear on the waveform."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "e.g. too sharp, whistle, keep air, good reference…"
+        field.stringValue = events[i].note ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Clear")
+        alert.addButton(withTitle: "Cancel")
+        let r = alert.runModal()
+        if r == .alertFirstButtonReturn {
+            let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            events[i].note = text.isEmpty ? nil : text
+        } else if r == .alertSecondButtonReturn {
+            events[i].note = nil
+        } else { return }
+        timeline.events = events
+        selectEvent(i)
+        saveCurrentSession()
+        status.stringValue = events[i].note == nil ? "ANNOTATION CLEARED" : "ANNOTATION SAVED — EVENT #\(i + 1)"
     }
 
     private func eventBoundsChanged(_ i: Int, start: Double, end: Double) {
