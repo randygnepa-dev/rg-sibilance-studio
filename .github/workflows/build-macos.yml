@@ -126,4 +126,4 @@ jobs:
             git push
           fi
 
-# trigger 0.2.24 reference UI redesign
+# trigger 0.2.25 real repair playback + smooth waveform
