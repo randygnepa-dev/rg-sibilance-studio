@@ -15,20 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Apply source patch
-        run: python3 scripts/patch_0_2_20.py
+        run: python3 scripts/patch_0_2_21.py
       - name: Validate source
         run: |
-          grep -F 'let RGVersion = "0.2.20"' Sources/RGSibilanceStudio.swift
-          grep -F 'var gainDB: Double = 0' Sources/RGSibilanceStudio.swift
-          grep -F 'var fadeIn: Double = 0.012' Sources/RGSibilanceStudio.swift
-          grep -F 'onPlayEvent' Sources/RGSibilanceStudio.swift
-          grep -F 'playRegionOnly' Sources/RGSibilanceStudio.swift
-          grep -F 'CROSSFADES' Sources/RGSibilanceStudio.swift
+          grep -F 'let RGVersion = "0.2.21"' Sources/RGSibilanceStudio.swift
+          grep -F 'onEventFadesChanged' Sources/RGSibilanceStudio.swift
+          grep -F 'visualGain(at:' Sources/RGSibilanceStudio.swift
+          grep -F 'center fader: event gain' Sources/RGSibilanceStudio.swift
+          grep -F 'fade dots: crossfade length' Sources/RGSibilanceStudio.swift
       - name: Commit source and version
         run: |
-          printf '0.2.20\n' > VERSION
+          printf '0.2.21\n' > VERSION
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Sources/RGSibilanceStudio.swift VERSION
-          git commit -m "Release 0.2.20 region preview gain and fades"
+          git commit -m "Release 0.2.21 direct waveform gain and fades"
           git push
