@@ -1,0 +1,46 @@
+name: Build RG Sibilance Lab
+on:
+  push:
+    branches: [main]
+    paths: ['Sources/RGLabHost.swift','webapp/**','.github/workflows/build-lab.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: rg-sibilance-lab-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        id: v
+        run: |
+          V=$(python3 -c 'import json;print(json.load(open("webapp/latest.json"))["version"])'); echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Compile universal host
+        run: |
+          mkdir -p build dist
+          SDK=$(xcrun --sdk macosx --show-sdk-path)
+          xcrun swiftc Sources/RGLabHost.swift -sdk "$SDK" -target arm64-apple-macos12.0 -framework Cocoa -framework WebKit -O -o build/arm
+          xcrun swiftc Sources/RGLabHost.swift -sdk "$SDK" -target x86_64-apple-macos12.0 -framework Cocoa -framework WebKit -O -o build/x86
+          lipo -create build/arm build/x86 -output build/RGLab
+      - name: Bundle
+        run: |
+          V='${{ steps.v.outputs.version }}'; APP='dist/RG Sibilance Lab.app'; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Web"
+          cp build/RGLab "$APP/Contents/MacOS/RG Sibilance Lab"; chmod +x "$APP/Contents/MacOS/RG Sibilance Lab"; cp webapp/app.html "$APP/Contents/Resources/Web/app.html"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleName</key><string>RG Sibilance Lab</string><key>CFBundleDisplayName</key><string>RG Sibilance Lab</string><key>CFBundleIdentifier</key><string>sk.bsmnt.rgsibilancelab</string><key>CFBundleExecutable</key><string>RG Sibilance Lab</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>$V</string><key>CFBundleVersion</key><string>$V</string><key>LSMinimumSystemVersion</key><string>12.0</string><key>NSHighResolutionCapable</key><true/></dict></plist>
+          PLIST
+          plutil -lint "$APP/Contents/Info.plist"; codesign --force --deep --sign - "$APP"; codesign --verify --deep --strict "$APP"
+      - name: Smoke test and package
+        run: |
+          APP='dist/RG Sibilance Lab.app'; "$APP/Contents/MacOS/RG Sibilance Lab" >/tmp/lab.log 2>&1 & P=$!; sleep 4; kill -0 $P; kill $P || true
+          V='${{ steps.v.outputs.version }}'; ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/RG-Sibilance-Lab-$V.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RG-Sibilance-Lab-${{ steps.v.outputs.version }}
+          path: dist/RG-Sibilance-Lab-${{ steps.v.outputs.version }}.zip
+      - name: Publish build
+        run: |
+          V='${{ steps.v.outputs.version }}'; git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'; git add -f "dist/RG-Sibilance-Lab-$V.zip"; git commit -m "Publish RG Sibilance Lab $V" || exit 0; git push
